@@ -1,12 +1,27 @@
 # Accounting Agent
 
-Local-first Swedish accounting automation workspace.
+Sweden-first, provider-neutral accounting automation for safe local proposals,
+exception review, reconciliation, and evidence packaging.
 
-MVP 1 is the Supplier Invoice Autopilot: it ingests synthetic local fixtures,
-extracts invoice fields, checks duplicates and supplier risk, proposes BAS/VAT
-treatment, writes an approval packet, and stores the result in a local SQLite
-queue. It does not post to Fortnox, send emails, approve invoices, or start
-payments.
+The functional runtime still uses synthetic local fixtures. It extracts invoice
+fields, isolates duplicates by client, checks supplier and VAT risk, proposes
+BAS/VAT treatment, prepares bank-reconciliation proposals, writes human review
+packets, and records local evidence. It does not process real client data or
+post, approve, send, pay, delete, change ERP settings, file tax, or call a live
+provider.
+
+The v2 foundation adds versioned Swedish/international jurisdiction metadata,
+explicit capability declarations for Fortnox, NetSuite, Oracle Fusion, SAP
+S/4HANA, and generic imports/exports, plus a deterministic bounded-specialist
+plan. Those declarations are not live connectors and expose no external-write
+authority.
+
+Inspect that machine-readable boundary:
+
+```bash
+python3 -m accounting_agent.cli platform-status
+python3 -m accounting_agent.cli platform-status --json
+```
 
 Run the complete local demo:
 
@@ -37,10 +52,19 @@ Build the read-only local operations cockpit:
 python3 -m accounting_agent.cli build-operations-cockpit
 ```
 
-The cockpit writes `reports/operations_cockpit/index.html`. It is static HTML
-generated from repo-local manifests, summaries, approval packets, audit logs,
-bank reconciliation proposals, and docs. It has no server, CDN, external asset,
-or live-provider dependency, and it remains observe/review only.
+The cockpit writes `reports/operations_cockpit/index.html`. It is a local,
+read-only Workbench generated from repo artifacts. Guided mode gives accountants
+one clear next decision; Expert mode exposes policy, provider, specialist-agent,
+and evidence detail. The main interface, review reasons, filters, workflow,
+provider matrix, and dates switch between English and Swedish. The selected
+guidance perspective changes explanatory emphasis only; risk priority and
+safety policy remain fixed. It has no CDN or live-provider dependency and
+remains observe/review only.
+
+Private course references, if present, stay under `.local/course_reference/`
+and are excluded from Git. They can inform topic coverage and plain-language
+explanations, but current official law, BFN, Skatteverket, BAS, and SIE sources
+remain authoritative.
 
 Run the lower-level sample pipeline:
 
@@ -54,6 +78,12 @@ Run tests:
 python3 -m unittest
 ```
 
-See `docs/local_demo_supplier_invoice_autopilot.md` for the one-command local
-demo and `docs/mvp_supplier_invoice_autopilot.md` for the MVP contract and
-packet schema. See `docs/operations_cockpit.md` for the cockpit workflow.
+Fixture commands use an explicit 2026-05-16 evaluation date by default so risk
+outcomes do not change with the wall clock. Pass `--as-of YYYY-MM-DD` to the
+supplier fixture or demo command when testing a different review date.
+
+Start with `docs/accounting_platform_v2.md` for the product, jurisdiction, ERP,
+computer-use, and specialist-agent contract. See
+`docs/local_demo_supplier_invoice_autopilot.md` for the one-command local demo,
+`docs/mvp_supplier_invoice_autopilot.md` for the packet schema, and
+`docs/operations_cockpit.md` for the interface workflow.

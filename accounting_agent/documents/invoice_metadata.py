@@ -12,6 +12,9 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
+from accounting_agent.client_identity import canonical_client_id
+from accounting_agent.jurisdictions import get_currency_spec
+
 
 _LABELS = {
     "invoice_number": re.compile(
@@ -46,7 +49,7 @@ class InvoiceMetadata:
         if not self.invoice_number or not self.supplier:
             return None
         parts = [
-            _normalize(client_id),
+            canonical_client_id(client_id),
             _normalize(self.supplier),
             _normalize(self.invoice_number),
             _normalize(self.invoice_date or ""),
@@ -100,19 +103,59 @@ def _parse_amount(value: str | None) -> tuple[int | None, str | None]:
     if match is None:
         return None, None
 
-    amount = match.group("amount").replace(" ", "")
-    if "," in amount and "." in amount:
-        amount = amount.replace(",", "")
-    elif "," in amount:
-        amount = amount.replace(",", ".")
+    currency = _currency(match)
+    if currency is None:
+        return None, None
+    try:
+        exponent = get_currency_spec(currency).minor_units
+    except ValueError:
+        # Keep the extracted currency code for review, but never guess its
+        # monetary precision.  Unknown ISO records fail closed.
+        return None, currency
+    amount = _normalize_decimal_text(match.group("amount"), decimal_places=exponent)
+    if amount is None:
+        # A lone separator followed by three digits is ambiguous for
+        # three-decimal currencies: it may be either a decimal mark or a
+        # thousands grouping mark.  Without locale evidence, fail closed.
+        return None, currency
 
     try:
         decimal_amount = Decimal(amount)
     except InvalidOperation:
-        return None, _currency(match)
+        return None, currency
 
-    minor = int((decimal_amount * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    return minor, _currency(match)
+    factor = Decimal(10) ** exponent
+    minor = int((decimal_amount * factor).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return minor, currency
+
+
+def _normalize_decimal_text(value: str, *, decimal_places: int = 2) -> str | None:
+    """Normalize common Swedish and international thousands/decimal styles."""
+
+    amount = value.replace(" ", "").replace("\u00a0", "")
+    separators = [separator for separator in (",", ".") if separator in amount]
+    if len(separators) == 2:
+        decimal_separator = max(separators, key=amount.rfind)
+        thousands_separator = "," if decimal_separator == "." else "."
+        return amount.replace(thousands_separator, "").replace(decimal_separator, ".")
+
+    if not separators:
+        return amount
+
+    separator = separators[0]
+    pieces = amount.split(separator)
+    if len(pieces) > 2:
+        if all(len(piece) == 3 for piece in pieces[1:]):
+            return "".join(pieces)
+        return "".join(pieces[:-1]) + "." + pieces[-1]
+
+    whole, fraction = pieces
+    # A single three-digit suffix is more likely a grouping mark than decimals.
+    if len(fraction) == 3 and decimal_places == 3:
+        return None
+    if len(fraction) == 3:
+        return whole + fraction
+    return whole + "." + fraction
 
 
 def _currency(match: re.Match[str]) -> str | None:

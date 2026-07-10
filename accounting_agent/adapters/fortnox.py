@@ -1,8 +1,8 @@
 """Safe Fortnox adapter boundary.
 
-The adapter is read-first and dry-run by default. It can prepare Fortnox-shaped
-draft payloads without credentials, but any external draft creation must pass
-through the policy permit validator and idempotency store.
+The adapter is read-first and dry-run only in this phase. It can prepare
+Fortnox-shaped draft payloads without credentials, but it has no external write
+path even when a caller supplies permissive configuration or a forged permit.
 """
 
 from __future__ import annotations
@@ -23,14 +23,11 @@ from accounting_agent.idempotency import (
     InMemoryIdempotencyStore,
 )
 from accounting_agent.permits import ExecutionPermit, PermitValidator, canonical_payload_hash
-from accounting_agent.policy import ActionType, POLICY_VERSION, PermissionMode
+from accounting_agent.policy import ActionType, POLICY_VERSION
 
 
 DEFAULT_FORTNOX_BASE_URL = "https://api.fortnox.se/3"
 
-ALLOWED_DRAFT_WRITE_PATHS = {
-    ActionType.DRAFT_SUPPLIER_INVOICE: "/supplierinvoices",
-}
 FORBIDDEN_LIVE_ACTIONS = {
     ActionType.POST_VOUCHER,
     ActionType.SEND_INVOICE,
@@ -116,7 +113,7 @@ class FortnoxConfig:
         if not self.access_token:
             raise MissingFortnoxCredentials(
                 "Fortnox access token is not configured. Set FORTNOX_ACCESS_TOKEN "
-                "for live reads/writes, or inject a mocked FortnoxTransport in tests."
+                "for separately approved live reads, or inject a mocked FortnoxTransport in tests."
             )
         return self.access_token
 
@@ -157,40 +154,10 @@ class HttpFortnoxTransport:
         idempotency_key: str,
         permit: ExecutionPermit | None,
     ) -> Mapping[str, Any]:
-        self._validate_write_request(path, json_body, idempotency_key, permit)
-        return self._request(
-            "POST",
-            path,
-            json_body=json_body,
-            idempotency_key=idempotency_key,
+        raise FortnoxPolicyViolation(
+            "Fortnox HTTP POST is structurally disabled in the current adapter phase; "
+            "configuration and permits cannot enable it."
         )
-
-    def _validate_write_request(
-        self,
-        path: str,
-        json_body: Mapping[str, Any],
-        idempotency_key: str,
-        permit: ExecutionPermit | None,
-    ) -> None:
-        if permit is None:
-            raise FortnoxPolicyViolation("Fortnox POST requests require an execution permit")
-        if not idempotency_key.strip():
-            raise FortnoxPolicyViolation("Fortnox POST requests require an idempotency key")
-        if permit.idempotency_key != idempotency_key:
-            raise FortnoxPolicyViolation("Fortnox POST idempotency key must match permit")
-        allowed_path = ALLOWED_DRAFT_WRITE_PATHS.get(permit.allowed_action)
-        if allowed_path != path:
-            raise FortnoxProtectedOperation(
-                f"Fortnox POST path {path} is not allowed for {permit.allowed_action.value}"
-            )
-        PermitValidator(accepted_policy_version=POLICY_VERSION).require_valid(
-            permit=permit,
-            case_id=permit.case_id,
-            action_type=permit.allowed_action,
-            payload=json_body,
-        )
-        _require_human_reviewed_live_draft_permit(permit)
-        _assert_no_forbidden_payload_markers(json_body)
 
     def _request(
         self,
@@ -201,6 +168,10 @@ class HttpFortnoxTransport:
         json_body: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> Mapping[str, Any]:
+        if method.upper() != "GET":
+            raise FortnoxPolicyViolation(
+                "Only HTTP GET is available through the current Fortnox transport."
+            )
         access_token = self.config.require_access_token()
         url = _join_url(self.config.base_url, path)
         if params:
@@ -429,6 +400,11 @@ class FortnoxAdapter:
         permit: ExecutionPermit | None,
     ) -> FortnoxDraftResult:
         self._raise_if_action_forbidden(action_type)
+        if not self.config.dry_run:
+            raise FortnoxPolicyViolation(
+                "Live Fortnox draft creation is structurally disabled in the current "
+                "adapter phase; configuration and permits cannot enable it."
+            )
         self.permit_validator.require_valid(
             permit=permit,
             case_id=case_id,
@@ -437,11 +413,6 @@ class FortnoxAdapter:
         )
         assert permit is not None
         payload_hash = canonical_payload_hash(payload)
-        if (
-            action_type is ActionType.DRAFT_SUPPLIER_INVOICE
-            and not self.config.dry_run
-        ):
-            _require_human_reviewed_live_draft_permit(permit)
         existing = self.idempotency_store.get(permit.idempotency_key)
         if existing is not None:
             return FortnoxDraftResult(
@@ -469,43 +440,14 @@ class FortnoxAdapter:
             )
 
         _assert_no_forbidden_payload_markers(payload)
-        if self.config.dry_run:
-            return self._record_result(
-                action_type=action_type,
-                case_id=case_id,
-                idempotency_key=permit.idempotency_key,
-                payload_hash=payload_hash,
-                status="dry_run_draft_not_created",
-                dry_run=True,
-                response={"payload": dict(payload)},
-            )
-
-        if not self.config.allow_draft_writes:
-            raise FortnoxPolicyViolation(
-                "Fortnox draft writes are disabled. Set FORTNOX_ALLOW_DRAFT_WRITES=true "
-                "only for an approved sandbox/test run with a valid execution permit."
-            )
-
-        path = ALLOWED_DRAFT_WRITE_PATHS.get(action_type)
-        if path is None:
-            raise FortnoxProtectedOperation(
-                f"Fortnox live action {action_type.value} is not available through this adapter"
-            )
-        response = self.transport.post(
-            path,
-            json_body=payload,
-            idempotency_key=permit.idempotency_key,
-            permit=permit,
-        )
         return self._record_result(
             action_type=action_type,
             case_id=case_id,
             idempotency_key=permit.idempotency_key,
             payload_hash=payload_hash,
-            status="draft_created",
-            dry_run=False,
-            external_reference=_external_reference(response),
-            response=response,
+            status="dry_run_draft_not_created",
+            dry_run=True,
+            response={"payload": dict(payload)},
         )
 
     def _list_reference(
@@ -655,27 +597,6 @@ def _assert_no_forbidden_payload_markers(payload: Mapping[str, Any]) -> None:
             )
 
 
-def _require_human_reviewed_live_draft_permit(permit: ExecutionPermit) -> None:
-    if permit.permission_mode not in {
-        PermissionMode.APPROVAL_REQUIRED,
-        PermissionMode.ESCALATION_REQUIRED,
-    }:
-        raise FortnoxPolicyViolation(
-            "Live Fortnox draft writes require a human-reviewed approval or "
-            "escalation permit. draft_only permits are dry-run only."
-        )
-    if not permit.required_reviews:
-        raise FortnoxPolicyViolation(
-            "Live Fortnox draft writes require at least one recorded human review."
-        )
-    missing_reviews = sorted(set(permit.required_reviews) - set(permit.approved_reviews))
-    if missing_reviews:
-        raise FortnoxPolicyViolation(
-            "Live Fortnox draft permit is missing approved reviews: "
-            + ", ".join(missing_reviews)
-        )
-
-
 def _walk_payload(value: Any, path: tuple[str, ...] = ()) -> Sequence[tuple[tuple[str, ...], Any]]:
     results: list[tuple[tuple[str, ...], Any]] = []
     if isinstance(value, Mapping):
@@ -687,16 +608,6 @@ def _walk_payload(value: Any, path: tuple[str, ...] = ()) -> Sequence[tuple[tupl
     else:
         results.append((path, value))
     return results
-
-
-def _external_reference(response: Mapping[str, Any]) -> str | None:
-    for key in ("SupplierInvoice", "Voucher", "Invoice"):
-        item = response.get(key)
-        if isinstance(item, Mapping):
-            for candidate in ("GivenNumber", "VoucherNumber", "DocumentNumber", "Number", "@url"):
-                if item.get(candidate):
-                    return str(item[candidate])
-    return None
 
 
 def _money(value: Decimal | int | str | Any) -> str:

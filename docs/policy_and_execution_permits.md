@@ -162,11 +162,8 @@ result = FortnoxWriteAdapter().execute(
 )
 ```
 
-The legacy `FortnoxWriteAdapter` returns `permit_validated_no_live_write`. The newer `FortnoxAdapter` in `accounting_agent.adapters.fortnox` supports safe reference reads, local draft payload generation, dry-run draft creation, idempotency checks, and permit-gated supplier-invoice draft creation for future approved sandbox use.
-
-Important live-write constraint: `draft_only` permits are dry-run only. If the
-Fortnox adapter is ever configured with `dry_run=false` and
-`allow_draft_writes=true`, supplier-invoice draft creation requires an
-`approval_required` or `escalation_required` permit with recorded approved
-reviews. This keeps low-risk local proposal work from silently becoming a live
-Fortnox write.
+The legacy `FortnoxWriteAdapter` returns `permit_validated_no_live_write`. The
+newer `FortnoxAdapter` supports safe reference reads, local draft payload
+generation, dry-run creation simulation, and idempotency checks. Its HTTP POST
+and every non-dry draft path are structurally disabled; configuration and
+caller-supplied approvals cannot enable them in this phase.

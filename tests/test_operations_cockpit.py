@@ -4,6 +4,7 @@ import json
 import re
 import tempfile
 import unittest
+from importlib import resources
 from pathlib import Path
 
 from accounting_agent.operations_cockpit import (
@@ -14,6 +15,25 @@ from accounting_agent.operations_cockpit import (
 
 
 class OperationsCockpitTests(unittest.TestCase):
+    def test_packaged_tokens_are_available_for_clean_installs(self) -> None:
+        packaged = resources.files("accounting_agent").joinpath("static", "tokens.css")
+        packaged_icon = resources.files("accounting_agent").joinpath("static", "favicon.svg")
+        packaged_icon_license = resources.files("accounting_agent").joinpath(
+            "static", "LICENSE.lucide.txt"
+        )
+
+        self.assertTrue(packaged.is_file())
+        self.assertTrue(packaged_icon.is_file())
+        self.assertTrue(packaged_icon_license.is_file())
+        self.assertEqual(
+            (Path(__file__).resolve().parents[1] / "tokens.css").read_text(encoding="utf-8"),
+            packaged.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            (Path(__file__).resolve().parents[1] / "favicon.svg").read_text(encoding="utf-8"),
+            packaged_icon.read_text(encoding="utf-8"),
+        )
+
     def test_builds_static_cockpit_from_local_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -44,10 +64,33 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertIn("python3 -m accounting_agent.cli build-operations-cockpit", html)
             self.assertIn("Fortnox dry-run", html)
             self.assertIn("Bank reconciliation", html)
+            self.assertIn('data-view="guided"', html)
+            self.assertIn('id="command-dialog"', html)
+            self.assertIn('id="review-search"', html)
+            self.assertIn("NetSuite", html)
+            self.assertIn("Oracle Fusion", html)
+            self.assertIn("SAP S/4HANA", html)
+            self.assertIn("Supervised computer use", html)
+            self.assertIn("Bounded specialist-agent pipeline", html)
+            self.assertIn("Agents never self-approve", html)
+            self.assertEqual(5, html.count('class="attention-row"'))
+            self.assertNotIn("more items not shown", html)
+            self.assertNotIn(str(root), html)
             self.assertNotIn("SECRET_VALUE", html)
-            self.assertIsNone(
-                re.search(r"https?://|<script|<link|src=", html, re.IGNORECASE)
+            self.assertTrue((root / "tokens.css").exists())
+            self.assertTrue((root / "favicon.svg").exists())
+            tokens = (root / "tokens.css").read_text(encoding="utf-8")
+            self.assertTrue(
+                tokens.startswith(
+                    "/* Hallmark · macrostructure: Workbench · tone: calm precise operational · anchor hue: cobalt */"
+                )
             )
+            page_css = re.search(r"<style>\s*(.*?)\s*</style>", html, re.DOTALL)
+            self.assertIsNotNone(page_css)
+            assert page_css is not None
+            self.assertTrue(page_css.group(1).startswith("/* Hallmark · macrostructure: Workbench"))
+            self.assertIsNone(re.search(r"#[0-9a-f]{3,8}|(?:rgb|hsl|oklch)\(", page_css.group(1), re.IGNORECASE))
+            _assert_offline_local_only(self, html)
 
     def test_missing_artifacts_build_with_empty_states_and_no_dead_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -67,9 +110,28 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertEqual("not_ready_no_demo_run", result.data.demo_readiness)
             self.assertIn("No current items found in local artifacts.", html)
             self.assertEqual([], verify_generated_links(result.output_path, root))
-            self.assertIsNone(
-                re.search(r"https?://|<script|<link|src=", html, re.IGNORECASE)
+            self.assertNotIn(str(root), html)
+            _assert_offline_local_only(self, html)
+
+    def test_nonzero_live_counter_is_rendered_as_danger(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_cockpit_fixture(root)
+            manifest_path = root / ".local" / "fake_client_dry_run" / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["safety"]["live_fortnox_calls"] = 2
+            _write_json(manifest_path, manifest)
+
+            result = build_operations_cockpit(repo_root=root)
+            html = result.output_path.read_text(encoding="utf-8")
+
+            self.assertEqual(2, result.data.live_counters["live_fortnox_calls"])
+            self.assertRegex(
+                html,
+                r'<div class="stat" data-tone="danger">\s*<dt[^>]*>Live ERP calls</dt>\s*<dd[^>]*>2</dd>',
             )
+            self.assertIn("safety violation, never a success state", html)
+            _assert_offline_local_only(self, html)
 
     def test_collect_uses_read_only_sqlite_counts_without_initializing_db(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -303,6 +365,43 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+
+
+def _assert_offline_local_only(test_case: unittest.TestCase, markup: str) -> None:
+    self_closing_links = re.findall(r"<link\b[^>]*>", markup, re.IGNORECASE)
+    test_case.assertEqual(2, len(self_closing_links))
+    test_case.assertRegex(
+        markup,
+        re.compile(
+            r'<link\s+rel="icon"\s+type="image/svg\+xml"\s+href="(?:\.\./)*favicon\.svg">',
+            re.IGNORECASE,
+        ),
+    )
+    test_case.assertRegex(
+        markup,
+        re.compile(
+            r'<link\s+rel="stylesheet"\s+href="(?:\.\./)*tokens\.css">',
+            re.IGNORECASE,
+        ),
+    )
+    test_case.assertRegex(
+        markup,
+        re.compile(r"<script>.*</script>", re.IGNORECASE | re.DOTALL),
+    )
+    test_case.assertIsNone(
+        re.search(
+            r"https?://|\bsrc\s*=|href\s*=\s*[\"'](?:https?:|//|data:|javascript:)",
+            markup,
+            re.IGNORECASE,
+        )
+    )
+    test_case.assertIsNone(
+        re.search(
+            r"\bfetch\s*\(|XMLHttpRequest|\beval\s*\(|sendBeacon|new\s+WebSocket",
+            markup,
+            re.IGNORECASE,
+        )
     )
 
 

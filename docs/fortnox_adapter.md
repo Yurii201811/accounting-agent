@@ -6,17 +6,18 @@ Status: implemented as a safe internal boundary with mocked/dry-run support. It 
 
 Fortnox is the production bookkeeping target, but agents must not call Fortnox directly. All Fortnox access goes through `accounting_agent.adapters.fortnox.FortnoxAdapter`, which sits behind the local policy and execution-permit layer.
 
-The adapter is read-first and draft-only:
+The adapter is read-first and local-dry-run only:
 
 - dry-run is on by default
 - reference reads are supported through the adapter transport
 - voucher, invoice, and supplier-invoice reads are blocked unless sensitive reads are explicitly enabled
 - supplier invoice draft payloads can be prepared locally without credentials
 - voucher draft payloads can be prepared locally without credentials
-- external supplier invoice draft creation requires a human-reviewed approval/escalation execution permit, an idempotency key, `dry_run=false`, and `allow_draft_writes=true`
-- live voucher creation remains blocked because Fortnox voucher creation may post bookkeeping rather than create a harmless draft
+- external supplier-invoice and voucher draft creation are structurally blocked
+  in this phase, even if `dry_run=false`, `allow_draft_writes=true`, and a permit
+  are supplied
 - the raw HTTP transport is not exported from the package root and its `POST`
-  method requires a matching execution permit before it can reach the network
+  method always raises before network access
 
 Strictly blocked in the policy and adapter boundary:
 
@@ -111,8 +112,7 @@ Voucher rows must balance. The current adapter can only dry-run voucher drafts.
 4. Issue an `ExecutionPermit` with the exact payload.
 5. Call `create_supplier_invoice_draft(...)` or `create_voucher_draft(...)`.
 6. The adapter validates the permit, payload hash, policy version, expiry, and idempotency key before any write path is reached.
-7. If the direct HTTP transport is used internally for a future sandbox write,
-   it validates the permit/idempotency binding again before making a `POST`.
+7. Any non-dry configuration raises a policy violation before a network write.
 
 Default dry-run result:
 
@@ -126,11 +126,9 @@ Repeated calls with the same permit/idempotency key return:
 duplicate_idempotency_key
 ```
 
-Live supplier-invoice draft creation intentionally does not accept a `draft_only`
-permit. Even when `dry_run=false` and `allow_draft_writes=true`, the permit must
-come from an `approval_required` or `escalation_required` policy decision and
-must contain at least one recorded approved review. Local dry-runs can still use
-`draft_only` permits.
+The `allow_draft_writes` field remains only for configuration compatibility; it
+cannot enable a write. Local dry-runs still require a matching permit so payload,
+case, policy, expiry, and idempotency behavior can be tested safely.
 
 ## Notes from official Fortnox docs
 
@@ -140,4 +138,6 @@ The implementation only relies on broad, current Fortnox API shapes:
 - documented resources include `/3/accounts`, `/3/suppliers`, `/3/customers`, `/3/financialyears`, `/3/vouchers`, `/3/invoices`, and `/3/supplierinvoices`
 - supplier invoices support list, retrieve, and create endpoints
 
-Before enabling any live sandbox write, re-check the current Fortnox docs for the exact create semantics and whether a requested operation is truly draft-only.
+Any future live-adapter phase requires a separate architecture/security change,
+new provider/environment-bound approvals, and a fresh review of current Fortnox
+semantics. It is not enabled by configuration in this version.

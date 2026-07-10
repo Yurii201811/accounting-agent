@@ -1,6 +1,6 @@
 # Fake client dry-run report
 
-Generated: 2026-07-10T18:30:33+00:00
+Generated: 2026-07-10T20:09:34+00:00
 
 Readiness: `local_fake_client_dry_run_complete`.
 
@@ -73,15 +73,7 @@ Primary cases count supplier invoice execution-gate decisions plus bank reconcil
 - False positives: `0`
 - Unsafe misses: `0`
 - Unclear outputs: `0`
-- Policy alignment warnings: `6`
-
-Policy-alignment warnings:
-- `{'item_type': 'supplier_invoice', 'item_id': 'fc_01_office_supplies', 'reason': 'pipeline_and_execution_gate_modes_differ', 'pipeline_policy_mode': 'approval_required', 'execution_gate_mode': 'draft_only'}`. The execution gate is the stricter authority for this dry run.
-- `{'item_type': 'supplier_invoice', 'item_id': 'fc_02_it_support', 'reason': 'pipeline_and_execution_gate_modes_differ', 'pipeline_policy_mode': 'approval_required', 'execution_gate_mode': 'draft_only'}`. The execution gate is the stricter authority for this dry run.
-- `{'item_type': 'supplier_invoice', 'item_id': 'fc_04_studio_monitor', 'reason': 'pipeline_and_execution_gate_modes_differ', 'pipeline_policy_mode': 'approval_required', 'execution_gate_mode': 'draft_only'}`. The execution gate is the stricter authority for this dry run.
-- `{'item_type': 'supplier_invoice', 'item_id': 'fc_05_meeting_room', 'reason': 'pipeline_and_execution_gate_modes_differ', 'pipeline_policy_mode': 'approval_required', 'execution_gate_mode': 'draft_only'}`. The execution gate is the stricter authority for this dry run.
-- `{'item_type': 'supplier_invoice', 'item_id': 'fc_06_mobile_subscription', 'reason': 'pipeline_and_execution_gate_modes_differ', 'pipeline_policy_mode': 'approval_required', 'execution_gate_mode': 'draft_only'}`. The execution gate is the stricter authority for this dry run.
-- `{'item_type': 'supplier_invoice', 'item_id': 'fc_07_cleaning', 'reason': 'pipeline_and_execution_gate_modes_differ', 'pipeline_policy_mode': 'approval_required', 'execution_gate_mode': 'draft_only'}`. The execution gate is the stricter authority for this dry run.
+- Policy alignment warnings: `0`
 
 ## Errors
 

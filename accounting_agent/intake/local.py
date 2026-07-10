@@ -8,6 +8,7 @@ Graph, email, or live document systems.
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import re
 import shutil
@@ -17,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from accounting_agent.client_identity import canonical_client_id, client_storage_key
 from accounting_agent.documents.hash import file_sha256
 from accounting_agent.documents.invoice_metadata import InvoiceMetadata, extract_invoice_metadata
 
@@ -40,7 +42,7 @@ class ClientMapper:
         default_client_id: str = "unmapped",
     ) -> None:
         self.rules = tuple(sorted(rules, key=lambda rule: (rule.priority, rule.rule_id)))
-        self.default_client_id = default_client_id
+        self.default_client_id = canonical_client_id(default_client_id)
 
     @classmethod
     def from_store(
@@ -72,22 +74,44 @@ class ClientMapper:
             match_type = rule.match_type.strip().lower()
             pattern = rule.pattern.strip().lower()
             if match_type == "sender" and sender == pattern:
-                return ClientMappingResult(rule.client_id, rule.rule_id, "sender")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id), rule.rule_id, "sender"
+                )
             if match_type == "domain" and domain == pattern:
-                return ClientMappingResult(rule.client_id, rule.rule_id, "domain")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id), rule.rule_id, "domain"
+                )
             if match_type == "folder" and pattern in folder:
-                return ClientMappingResult(rule.client_id, rule.rule_id, "folder")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id), rule.rule_id, "folder"
+                )
             if match_type == "source_metadata":
                 if any(pattern in value for value in metadata.values()):
-                    return ClientMappingResult(rule.client_id, rule.rule_id, "source_metadata")
+                    return ClientMappingResult(
+                        canonical_client_id(rule.client_id),
+                        rule.rule_id,
+                        "source_metadata",
+                    )
             elif match_type == "path_contains" and pattern in path_text:
-                return ClientMappingResult(rule.client_id, rule.rule_id, "path_contains")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id), rule.rule_id, "path_contains"
+                )
             elif match_type == "reference_contains" and pattern in reference_text:
-                return ClientMappingResult(rule.client_id, rule.rule_id, "reference_contains")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id),
+                    rule.rule_id,
+                    "reference_contains",
+                )
             elif match_type == "supplier_contains" and pattern in supplier_text:
-                return ClientMappingResult(rule.client_id, rule.rule_id, "supplier_contains")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id),
+                    rule.rule_id,
+                    "supplier_contains",
+                )
             elif match_type == "default":
-                return ClientMappingResult(rule.client_id, rule.rule_id, "default")
+                return ClientMappingResult(
+                    canonical_client_id(rule.client_id), rule.rule_id, "default"
+                )
         return ClientMappingResult(self.default_client_id, None, "no_matching_rule")
 
 
@@ -117,20 +141,40 @@ class LocalIntakeProcessor:
             raise FileNotFoundError(f"intake source file does not exist: {path}")
 
         sha256 = file_sha256(path)
-        source_fingerprint = _source_fingerprint(source, sha256)
+        invoice_metadata = extract_invoice_metadata(path)
+        raw_mapping = self.client_mapper.map_client(source, invoice_metadata)
+        mapping = ClientMappingResult(
+            canonical_client_id(raw_mapping.client_id),
+            raw_mapping.rule_id,
+            raw_mapping.reason,
+        )
+        source_fingerprint = _source_fingerprint(
+            source,
+            sha256,
+            client_id=mapping.client_id,
+        )
         existing = self.store.get_case_by_source_fingerprint(source_fingerprint)
         if existing is not None:
             return existing
-
-        invoice_metadata = extract_invoice_metadata(path)
-        mapping = self.client_mapper.map_client(source, invoice_metadata)
+        legacy_existing = self.store.get_case_by_source_fingerprint(
+            _legacy_v01_source_fingerprint(source, sha256)
+        )
+        if legacy_existing is not None and legacy_existing.client_id == mapping.client_id:
+            # v0.1 fingerprints were global and omitted the client.  Reuse a
+            # same-client row for idempotency, but never let that global key
+            # link a new client to the legacy owner.
+            return legacy_existing
         duplicate_of, duplicate_reasons = self._find_duplicate(
             sha256=sha256,
             client_id=mapping.client_id,
             invoice_duplicate_key=invoice_metadata.duplicate_key(client_id=mapping.client_id),
         )
         now = self.clock()
-        stored_path, storage_mode = self._store_file(path, sha256)
+        stored_path, storage_mode = self._store_file(
+            path,
+            sha256,
+            client_id=mapping.client_id,
+        )
         source_metadata = _jsonable_mapping(source.source_metadata)
         source_metadata["client_mapping_reason"] = mapping.reason
         case = IntakeCase(
@@ -241,7 +285,7 @@ class LocalIntakeProcessor:
     ) -> tuple[IntakeCase | None, tuple[str, ...]]:
         duplicate_of: IntakeCase | None = None
         reasons: list[str] = []
-        by_hash = self.store.find_duplicate_by_hash(sha256)
+        by_hash = self.store.find_duplicate_by_hash(client_id, sha256)
         if by_hash is not None:
             duplicate_of = by_hash
             reasons.append("sha256")
@@ -252,13 +296,26 @@ class LocalIntakeProcessor:
                 reasons.append("invoice_metadata")
         return duplicate_of, tuple(reasons)
 
-    def _store_file(self, source_path: Path, sha256: str) -> tuple[Path, str]:
+    def _store_file(
+        self,
+        source_path: Path,
+        sha256: str,
+        *,
+        client_id: str,
+    ) -> tuple[Path, str]:
         if not self.copy_files:
             return source_path, "referenced"
         if self.storage_root is None:
             return source_path, "reference_only"
 
-        target_dir = self.storage_root / "documents" / sha256[:2]
+        storage_key = client_storage_key(client_id)
+        target_dir = (
+            self.storage_root
+            / "clients"
+            / storage_key
+            / "documents"
+            / sha256[:2]
+        )
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"{sha256}-{source_path.name}"
         if not target_path.exists():
@@ -398,7 +455,28 @@ def teams_message_file_source(
     )
 
 
-def _source_fingerprint(source: IntakeSource, sha256: str) -> str:
+def _source_fingerprint(
+    source: IntakeSource,
+    sha256: str,
+    *,
+    client_id: str,
+) -> str:
+    canonical = canonical_client_id(client_id)
+    material = json.dumps(
+        [
+            canonical,
+            source.source_type.value,
+            source.source_reference,
+            str(source.file_path),
+            sha256,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _legacy_v01_source_fingerprint(source: IntakeSource, sha256: str) -> str:
     material = "|".join(
         (
             source.source_type.value,

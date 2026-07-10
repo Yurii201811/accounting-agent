@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from datetime import date
 from pathlib import Path
 
 from accounting_agent.bank_reconciliation import BankReconciliationPipeline
+from accounting_agent.agentic import agentic_platform_summary
 from accounting_agent.db import LocalQueue
 from accounting_agent.fake_client_dry_run import (
     DEFAULT_FAKE_CLIENT_OUTPUT,
@@ -13,8 +16,11 @@ from accounting_agent.fake_client_dry_run import (
     run_fake_client_dry_run,
 )
 from accounting_agent.intake import IntakeSourceType, LocalIntakeProcessor, SQLiteIntakeStore
+from accounting_agent.erp import erp_registry_summary
+from accounting_agent.jurisdictions import jurisdiction_registry_summary
 from accounting_agent.local_demo import (
     DEFAULT_DEMO_OUTPUT,
+    DEMO_EVALUATION_DATE,
     LocalDemoError,
     run_supplier_invoice_autopilot_demo,
 )
@@ -45,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES)
     process.add_argument("--db", type=Path, default=DEFAULT_DB)
     process.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    process.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        default=DEMO_EVALUATION_DATE,
+        help="Evaluation date for deterministic fixture risk review (YYYY-MM-DD).",
+    )
 
     reconcile = subparsers.add_parser(
         "reconcile-bank-fixtures",
@@ -72,6 +84,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     demo.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES)
     demo.add_argument("--output", type=Path, default=DEFAULT_DEMO_OUTPUT)
+    demo.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        default=DEMO_EVALUATION_DATE,
+        help="Evaluation date for deterministic fixture risk review (YYYY-MM-DD).",
+    )
 
     fake_client = subparsers.add_parser(
         "fake-client-dry-run",
@@ -86,15 +104,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     cockpit.add_argument("--output", type=Path, default=DEFAULT_OPERATIONS_COCKPIT_OUTPUT)
 
+    platform_status = subparsers.add_parser(
+        "platform-status",
+        help="Show jurisdiction, ERP capability, computer-use, role, and specialist boundaries.",
+    )
+    platform_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the complete machine-readable platform declaration.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "process-fixtures":
-        pipeline = SupplierInvoicePipeline(db_path=args.db, output_dir=args.output)
+        pipeline = SupplierInvoicePipeline(
+            db_path=args.db,
+            output_dir=args.output,
+            evaluation_date=args.as_of,
+        )
         packets = pipeline.process_fixture_dir(args.fixtures)
         queue = LocalQueue(args.db)
         print(f"Processed {len(packets)} supplier invoice fixtures")
         print(f"Approval packets: {args.output}")
         print(f"SQLite queue: {args.db}")
         print(f"Stored approval packets: {queue.count('approval_packets')}")
+        print(f"Evaluation date: {args.as_of.isoformat()}")
         for packet in packets:
             print(
                 f"- {packet['case']['fixture_name']}: "
@@ -148,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest = run_supplier_invoice_autopilot_demo(
                 supplier_fixture_dir=args.fixtures,
                 output_dir=args.output,
+                evaluation_date=args.as_of,
             )
         except LocalDemoError as exc:
             print(f"Demo failed: {exc}", file=sys.stderr)
@@ -158,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Normalized intake cases: {summary['normalized_intake_cases']}")
         print(f"Approval packets: {summary['approval_packets']}")
         print(f"Execution permits issued: {summary['execution_permits_issued']}")
+        print(f"Evaluation date: {summary['evaluation_date']}")
         print("Live Fortnox calls: 0")
         print("Live Microsoft 365 calls: 0")
         print("Emails/payments/filings: 0")
@@ -208,6 +243,28 @@ def main(argv: list[str] | None = None) -> int:
             for path in result.broken_links:
                 print(f"- broken link target: {path}")
             return 1
+        return 0
+
+    if args.command == "platform-status":
+        payload = {
+            "jurisdictions": jurisdiction_registry_summary(),
+            "erp": erp_registry_summary(),
+            "agentic": agentic_platform_summary(),
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        print("Accounting Agent v2 platform boundary")
+        print("Default jurisdiction: se-2026 (foundation only, no filing claim)")
+        print("ERP profiles:")
+        for profile in payload["erp"]["profiles"]:
+            print(f"- {profile['display_name']}: {profile['connection_status']}")
+        print("External post/approve/send/pay/file/delete/settings: forbidden")
+        print("Computer use: supervised observation and evidence only")
+        print(
+            "Bounded specialists: "
+            f"{len(payload['agentic']['specialists'])}; human decision gate required"
+        )
         return 0
 
     parser.error(f"Unsupported command: {args.command}")

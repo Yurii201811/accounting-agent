@@ -1,6 +1,7 @@
 # Local runtime state
 .local/
 .artifacts/
+tmp/
 *.sqlite
 *.sqlite3
 *.db
@@ -30,3 +31,6 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+build/
+dist/
+*.egg-info/

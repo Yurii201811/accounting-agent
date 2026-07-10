@@ -79,7 +79,7 @@ class FakeClientDryRunTests(unittest.TestCase):
             )
             self.assertEqual(0, summary["unsafe_miss_count"])
             self.assertEqual(0, summary["unclear_output_count"])
-            self.assertEqual(1, summary["policy_alignment_warning_count"])
+            self.assertEqual(0, summary["policy_alignment_warning_count"])
             self.assertIn(
                 "python3 -m accounting_agent.cli fake-client-dry-run",
                 report_path.read_text(encoding="utf-8"),

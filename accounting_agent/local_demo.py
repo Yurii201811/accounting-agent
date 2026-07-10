@@ -32,11 +32,16 @@ from accounting_agent.policy import (
     evaluate_policy,
 )
 from accounting_agent.supplier_invoice import SupplierInvoicePipeline
-from accounting_agent.supplier_invoice.pipeline import minor_amount
+from accounting_agent.risk_review import findings_from_dicts
+from accounting_agent.supplier_invoice.pipeline import (
+    build_supplier_invoice_policy_context,
+    minor_amount,
+)
 
 
 DEFAULT_DEMO_OUTPUT = Path(".local/demo_supplier_invoice_autopilot")
 DEMO_OUTPUT_MARKER = ".accounting_agent_demo_output"
+DEMO_EVALUATION_DATE = date(2026, 5, 16)
 
 
 class LocalDemoError(RuntimeError):
@@ -59,6 +64,7 @@ def run_supplier_invoice_autopilot_demo(
     supplier_fixture_dir: str | Path = Path("fixtures/supplier_invoices"),
     output_dir: str | Path = DEFAULT_DEMO_OUTPUT,
     client_id: str = "fixture_client",
+    evaluation_date: date = DEMO_EVALUATION_DATE,
 ) -> dict[str, Any]:
     """Run the complete local supplier-invoice demo and write stage artifacts."""
 
@@ -84,6 +90,7 @@ def run_supplier_invoice_autopilot_demo(
         db_path=paths["db"],
         output_dir=paths["approval_packets_json"],
         client_id=client_id,
+        evaluation_date=evaluation_date,
     )
     packets = pipeline.process_fixture_dir(fixture_dir)
 
@@ -107,6 +114,7 @@ def run_supplier_invoice_autopilot_demo(
             policy_context=policy_context,
             policy_decision=gate_decision,
             permit_store=permit_store,
+            upstream_policy_mode=str(packet["policy_decision"]["mode"]),
         )
         if fortnox_record["execution_permit"]["status"] == "issued":
             permits_issued += 1
@@ -233,6 +241,7 @@ def run_supplier_invoice_autopilot_demo(
         "email_sends": 0,
         "payments_or_filings": 0,
         "gnubok_mode": "local_shadow_stub",
+        "evaluation_date": evaluation_date.isoformat(),
         "risk_levels": dict(Counter(packet["risk"]["level"] for packet in packets)),
         "policy_modes": dict(
             Counter(packet["policy_decision"]["mode"] for packet in packets)
@@ -257,6 +266,12 @@ def run_supplier_invoice_autopilot_demo(
     }
     manifest = {
         "summary": summary,
+        "run_context": {
+            "evaluation_date": evaluation_date.isoformat(),
+            "evaluation_date_source": "explicit_synthetic_scenario_date",
+            "client_id": client_id,
+            "jurisdiction_pack": "se-2026",
+        },
         "cases": case_artifacts,
         "safety": {
             "uses_sample_fixtures_only": True,
@@ -500,23 +515,13 @@ def _policy_context_from_packet(
     *,
     client_id: str,
 ) -> PolicyContext:
-    extracted = packet["extracted_fields"]
-    supplier_match = packet["supplier_match"]
-    duplicate_check = packet["duplicate_check"]
-    vat_proposal = packet["vat_proposal"]
-    return PolicyContext(
-        action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+    return build_supplier_invoice_policy_context(
         client_id=client_id,
-        amount_minor=minor_amount(extracted["amounts"].get("gross")),
-        supplier_known=supplier_match.get("status") == "matched",
-        bank_details_changed=supplier_match.get("bank_details_status") == "changed",
-        duplicate_risk=1.0
-        if duplicate_check.get("status") == "possible_duplicate"
-        else 0.0,
-        vat_confidence=1.0 if vat_proposal.get("status") == "normal" else 0.5,
-        ocr_confidence=float(extracted.get("extraction_confidence") or 0.0),
-        period_locked=bool(extracted.get("period_locked", False)),
-        risk_evidence_complete=True,
+        extracted=packet["extracted_fields"],
+        supplier_match=packet["supplier_match"],
+        duplicate_check=packet["duplicate_check"],
+        vat_proposal=packet["vat_proposal"],
+        risk_findings=findings_from_dicts(packet.get("risk_findings", ())),
     )
 
 
@@ -575,6 +580,7 @@ def _build_fortnox_dry_run_record(
     policy_context: PolicyContext,
     policy_decision: PolicyDecision,
     permit_store: SQLitePermitStore,
+    upstream_policy_mode: str,
 ) -> dict[str, Any]:
     adapter = FortnoxAdapter(config=FortnoxConfig(dry_run=True))
     record: dict[str, Any] = {
@@ -614,6 +620,16 @@ def _build_fortnox_dry_run_record(
         if policy_decision.permission_mode is PermissionMode.DRAFT_ONLY
         else "prepared_but_review_blocked"
     )
+
+    if policy_decision.permission_mode.value != upstream_policy_mode:
+        record["execution_permit"] = {
+            "status": "not_issued_policy_disagreement",
+            "pipeline_mode": upstream_policy_mode,
+            "execution_gate_mode": policy_decision.permission_mode.value,
+            "reason": "Policy disagreement is a hard stop; neither result may issue a permit.",
+        }
+        record["adapter_payload_status"] = "prepared_but_policy_disagreement"
+        return record
 
     if (
         policy_decision.permission_mode is not PermissionMode.DRAFT_ONLY

@@ -34,17 +34,31 @@ external systems. It does not initialize or mutate the SQLite database.
 
 ## What it shows
 
-- Workflow map from intake through audit/report.
-- Operational status including last run, local readiness, live-call counters,
-  and SQLite counts.
-- Safety banner with current allowed and blocked boundaries.
-- Review queues for approval, escalation, forbidden cases, missing info, risky
-  suppliers, duplicate risk, changed bank details, uncertain VAT, and policy
-  alignment warnings.
-- Links to existing local manifests, summaries, audit logs, approval packets,
-  Fortnox dry-run payloads, gnubok shadow outputs, bank proposals, the
-  fake-client report, and relevant docs.
-- Safe next local commands and actions that remain forbidden.
+- Today: run readiness, unique priority-case count, and zero-required live-call
+  counters. A non-zero live counter is rendered as a safety violation.
+- Review: one deduplicated row per case, sorted by the strictest stop condition,
+  with search and priority filtering. No queue is truncated.
+- Workflow: deterministic accounting stages and the bounded specialist-agent
+  plan, ending at a human decision gate.
+- Integrations: capability declarations generated from the provider registry
+  for Fortnox, NetSuite, Oracle Fusion, SAP S/4HANA, generic exchange, and
+  supervised observation-only computer use.
+- Controls and evidence: policy boundaries, grouped local artifacts, and expert
+  details without leaking the local workspace path.
+
+Guided mode keeps the next decision and plain-language evidence visible. Expert
+mode adds raw case IDs, policy modes, queue counts, and local operator commands.
+Raw policy codes and fixture identifiers stay inside Expert details. The
+guidance perspective and English/Swedish controls persist locally in the
+browser; perspective changes explanatory emphasis but never risk order or
+policy. The primary interface, dynamic review reasons, filters, workflow,
+provider matrix, empty states, and dates are localized. A zero-result filter
+state offers a local clear-filters action.
+`Cmd/Ctrl + K` opens section navigation.
+
+The stylesheet is bundled as package data and copied locally when a clean
+installation builds a cockpit. The page remains offline and contains no CDN,
+remote font, or runtime asset dependency.
 
 ## Safety contract
 

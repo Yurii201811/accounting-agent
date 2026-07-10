@@ -26,6 +26,7 @@ class RiskSignal(str, Enum):
     UNCLEAR_VAT = "unclear_vat"
     LOW_OCR_CONFIDENCE = "low_ocr_confidence"
     LOCKED_OLD_PERIOD = "locked_old_period"
+    DOCUMENT_AGE_REVIEW = "document_age_review"
     MISSING_SOURCE_DOCUMENT = "missing_source_document"
     POSSIBLE_PERSONAL_EXPENSE = "possible_personal_private_expense"
     MISSING_BUSINESS_PURPOSE = "missing_business_purpose"
@@ -288,7 +289,7 @@ def review_accounting_case(
         )
 
     old_period = _old_period_evidence(accounting_case, config, today)
-    if accounting_case.period_locked or old_period is not None:
+    if accounting_case.period_locked:
         locked_evidence = {
             "period_locked": accounting_case.period_locked,
             "accounting_period": accounting_case.accounting_period,
@@ -297,17 +298,31 @@ def review_accounting_case(
         findings.append(
             RiskFinding(
                 signal=RiskSignal.LOCKED_OLD_PERIOD,
-                severity=(
-                    RiskSeverity.BLOCKER
-                    if accounting_case.period_locked
-                    else RiskSeverity.WARNING
-                ),
-                message="Accounting period is locked or older than the review threshold.",
+                severity=RiskSeverity.BLOCKER,
+                message="Accounting period is explicitly locked.",
                 evidence=locked_evidence,
                 policy_impact=RiskPolicyImpact(
-                    "forbidden" if accounting_case.period_locked else "approval_required",
-                    () if accounting_case.period_locked else ("accountant_review",),
+                    "forbidden",
+                    (),
                     "risk:locked_old_period",
+                ),
+            )
+        )
+    elif old_period is not None:
+        findings.append(
+            RiskFinding(
+                signal=RiskSignal.DOCUMENT_AGE_REVIEW,
+                severity=RiskSeverity.WARNING,
+                message="Document age exceeds the review threshold; no period lock was asserted.",
+                evidence={
+                    "period_locked": False,
+                    "accounting_period": accounting_case.accounting_period,
+                    **old_period,
+                },
+                policy_impact=RiskPolicyImpact(
+                    "approval_required",
+                    ("accountant_review",),
+                    "risk:document_age_review",
                 ),
             )
         )
@@ -465,6 +480,39 @@ def _old_period_evidence(
         "age_days": age_days,
         "old_period_days": config.old_period_days,
     }
+
+
+def findings_from_dicts(items: Sequence[Mapping[str, Any]]) -> tuple[RiskFinding, ...]:
+    """Rehydrate serialized findings for the canonical typed policy gate."""
+
+    findings: list[RiskFinding] = []
+    for item in items:
+        impact_data = item.get("policy_impact")
+        if not isinstance(impact_data, Mapping):
+            raise ValueError("risk finding policy_impact must be an object")
+        findings.append(
+            RiskFinding(
+                signal=RiskSignal(str(item["signal"])),
+                severity=RiskSeverity(str(item["severity"])),
+                message=str(item["message"]),
+                evidence=dict(item.get("evidence") or {}),
+                policy_impact=RiskPolicyImpact(
+                    minimum_permission_mode=str(impact_data["minimum_permission_mode"]),
+                    required_reviews=tuple(
+                        str(review) for review in impact_data.get("required_reviews", ())
+                    ),
+                    reason=str(impact_data.get("reason") or ""),
+                ),
+                deterministic=bool(item.get("deterministic", True)),
+                explanation=(
+                    str(item["explanation"])
+                    if item.get("explanation") is not None
+                    else None
+                ),
+                review_version=str(item.get("review_version") or RISK_REVIEW_VERSION),
+            )
+        )
+    return tuple(findings)
 
 
 def _private_expense_evidence(

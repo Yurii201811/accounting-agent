@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from accounting_agent.client_identity import canonical_client_id
 from accounting_agent.policy import (
     ActionType,
     PermissionMode,
@@ -34,7 +36,7 @@ class BankReconciliationPipeline:
         client_id: str = DEFAULT_CLIENT_ID,
     ) -> None:
         self.output_dir = Path(output_dir) if output_dir else None
-        self.client_id = client_id
+        self.client_id = canonical_client_id(client_id)
 
     def process_fixture_dir(self, fixtures_dir: str | Path) -> list[dict[str, Any]]:
         root = Path(fixtures_dir)
@@ -49,9 +51,18 @@ class BankReconciliationPipeline:
         now = utc_now()
         duplicate_risks = duplicate_transaction_risks(transactions)
         target_by_id = {target.target_id: target for target in targets}
+        candidates_by_transaction = {
+            transaction.transaction_id: build_candidates(transaction, targets)
+            for transaction in transactions
+        }
+        selected_target_counts = Counter(
+            candidates[0].target_id
+            for candidates in candidates_by_transaction.values()
+            if candidates
+        )
         proposals = []
         for transaction in transactions:
-            candidates = build_candidates(transaction, targets)
+            candidates = candidates_by_transaction[transaction.transaction_id]
             selected = candidates[0] if candidates else None
             selected_target = target_by_id.get(selected.target_id) if selected else None
             proposal = build_reconciliation_proposal(
@@ -61,6 +72,9 @@ class BankReconciliationPipeline:
                 candidates=candidates,
                 selected_target=selected_target,
                 duplicate_risk=duplicate_risks.get(transaction.transaction_id, 0.0),
+                target_reuse_count=(
+                    selected_target_counts.get(selected.target_id, 0) if selected else 0
+                ),
             )
             packet = proposal.get("approval_packet")
             if packet:
@@ -104,16 +118,24 @@ def build_reconciliation_proposal(
     candidates: list[MatchCandidate],
     selected_target: MatchTarget | None,
     duplicate_risk: float,
+    target_reuse_count: int = 0,
 ) -> dict[str, Any]:
     selected_candidate = candidates[0] if candidates else None
     case_id = f"br_{transaction.transaction_id}"
-    risk_flags = _risk_flags(transaction, selected_candidate, selected_target, duplicate_risk)
+    target_reused = target_reuse_count > 1
+    risk_flags = _risk_flags(
+        transaction,
+        selected_candidate,
+        selected_target,
+        duplicate_risk,
+        target_reused=target_reused,
+    )
     proposal_decision = _evaluate_proposal_policy(
         client_id=client_id,
         transaction=transaction,
         selected_candidate=selected_candidate,
         selected_target=selected_target,
-        duplicate_risk=duplicate_risk,
+        duplicate_risk=max(duplicate_risk, 0.85 if target_reused else 0.0),
     )
     matching_decision = evaluate_policy(
         PolicyContext(action_type=ActionType.READ_ANALYSIS, client_id=client_id)
@@ -125,7 +147,11 @@ def build_reconciliation_proposal(
             amount_minor=abs(transaction.amount_minor),
         )
     )
-    proposal_status = _proposal_status(selected_candidate, duplicate_risk)
+    proposal_status = _proposal_status(
+        selected_candidate,
+        duplicate_risk,
+        target_reused=target_reused,
+    )
     payload = _reconciliation_payload(
         case_id=case_id,
         transaction=transaction,
@@ -150,6 +176,8 @@ def build_reconciliation_proposal(
         "explanations": _proposal_explanations(selected_candidate, selected_target, risk_flags),
         "risk": {
             "duplicate_risk": duplicate_risk,
+            "target_reuse_count": target_reuse_count,
+            "allocation_conflict": target_reused,
             "flags": risk_flags,
             "level": _risk_level(risk_flags, proposal_decision.permission_mode),
         },
@@ -279,6 +307,8 @@ def _risk_flags(
     selected_candidate: MatchCandidate | None,
     selected_target: MatchTarget | None,
     duplicate_risk: float,
+    *,
+    target_reused: bool = False,
 ) -> list[dict[str, Any]]:
     flags: list[dict[str, Any]] = []
     if selected_candidate is None:
@@ -321,7 +351,21 @@ def _risk_flags(
             {
                 "code": "duplicate_looking_transaction",
                 "severity": "high",
-                "message": "Another sample bank transaction has the same amount, reference, currency, and counterparty.",
+                "message": (
+                    "Another sample bank transaction has the same amount, reference, "
+                    "currency, counterparty, and bank account within the review window."
+                ),
+            }
+        )
+    if target_reused:
+        flags.append(
+            {
+                "code": "target_already_proposed",
+                "severity": "high",
+                "message": (
+                    "More than one bank transaction points to the same open item; "
+                    "residual allocation must be reviewed before reconciliation."
+                ),
             }
         )
     if _bank_details_changed(selected_target):
@@ -351,10 +395,12 @@ def _candidate_flag_message(flag: str) -> str:
 def _proposal_status(
     selected_candidate: MatchCandidate | None,
     duplicate_risk: float,
+    *,
+    target_reused: bool = False,
 ) -> str:
     if selected_candidate is None:
         return "unmatched_needs_review"
-    if duplicate_risk >= 0.5:
+    if duplicate_risk >= 0.5 or target_reused:
         return "duplicate_review_required"
     if "partial_payment" in selected_candidate.flags:
         return "partial_payment_review_required"
@@ -409,6 +455,8 @@ def _required_human_decision(
         return "Confirm whether the partial payment should be allocated to the selected open item and whether a residual remains open."
     if any(flag["code"] == "duplicate_looking_transaction" for flag in risk_flags):
         return "Check whether this is a true duplicate bank transaction or a valid second payment before any reconciliation."
+    if any(flag["code"] == "target_already_proposed" for flag in risk_flags):
+        return "Review all transactions proposed for this open item and confirm the residual allocation before reconciliation."
     return "Review the match evidence and approve, reject, or reassign the proposed reconciliation."
 
 

@@ -1121,7 +1121,7 @@ def _write_report(report_path: Path, manifest: dict[str, Any]) -> None:
     if metrics["policy_alignment_warnings"]:
         lines.extend(["", "Policy-alignment warnings:"])
         lines.extend(
-            f"- `{item}`. The execution gate is the stricter authority for this dry run."
+            f"- `{item}`. Policy disagreement is a hard stop and no permit is issued."
             for item in metrics["policy_alignment_warnings"]
         )
     lines.extend(

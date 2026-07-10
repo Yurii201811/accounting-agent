@@ -4,7 +4,7 @@ Generated: 2026-05-16
 
 Target workspace: `/Users/yuriibakurov/Documents/Accounting Agent`
 
-Status: MVP-0 local implementation plus architecture notes. The workspace now
+Status: v0.2 local implementation plus architecture notes. The workspace now
 contains local fixture pipelines, policy/permit code, dry-run adapters, tests,
 and demos. No production integration, live Fortnox write, email send, payment,
 tax filing, or real client-data processing is allowed in this workspace.
@@ -60,8 +60,8 @@ No production runtime integration exists in this repo:
 - no payment, tax filing, final voucher posting, supplier invoice approval, deletion, or settings-change implementation
 - no real client documents or tracked secrets should be present
 
-This folder is still not currently a git repository. Use an explicit operator
-decision before initializing or publishing it.
+This folder now has a local Git baseline and implementation checkpoint. It has
+not been published and still contains no production integration authority.
 
 Important mismatch to preserve:
 

@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from accounting_agent.client_identity import canonical_client_id
+
 from .models import ClientMappingRule, ExtractionTask, IntakeCase, IntakeSourceType
 
 
@@ -37,7 +39,13 @@ class SQLiteIntakeStore:
                 )
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (rule.rule_id, rule.match_type, rule.pattern, rule.client_id, rule.priority),
+                (
+                    rule.rule_id,
+                    rule.match_type,
+                    rule.pattern,
+                    canonical_client_id(rule.client_id),
+                    rule.priority,
+                ),
             )
 
     def list_client_mapping_rules(self) -> tuple[ClientMappingRule, ...]:
@@ -72,17 +80,18 @@ class SQLiteIntakeStore:
             ).fetchone()
         return _case_from_row(row) if row is not None else None
 
-    def find_duplicate_by_hash(self, sha256: str) -> IntakeCase | None:
+    def find_duplicate_by_hash(self, client_id: str, sha256: str) -> IntakeCase | None:
         with self._session() as connection:
             row = connection.execute(
                 """
                 SELECT *
                 FROM document_intake_cases
-                WHERE sha256 = ?
+                WHERE client_id = ?
+                  AND sha256 = ?
                 ORDER BY created_at ASC, case_id ASC
                 LIMIT 1
                 """,
-                (sha256,),
+                (canonical_client_id(client_id), sha256),
             ).fetchone()
         return _case_from_row(row) if row is not None else None
 
@@ -97,11 +106,14 @@ class SQLiteIntakeStore:
                 ORDER BY created_at ASC, case_id ASC
                 LIMIT 1
                 """,
-                (client_id, invoice_duplicate_key),
+                (canonical_client_id(client_id), invoice_duplicate_key),
             ).fetchone()
         return _case_from_row(row) if row is not None else None
 
     def insert_case(self, case: IntakeCase) -> None:
+        canonical = canonical_client_id(case.client_id)
+        if canonical != case.client_id:
+            raise ValueError("IntakeCase client_id must already be canonical")
         with self._session() as connection:
             connection.execute(
                 """
@@ -278,7 +290,7 @@ class SQLiteIntakeStore:
                 );
 
                 CREATE INDEX IF NOT EXISTS document_intake_cases_sha256_idx
-                    ON document_intake_cases (sha256);
+                    ON document_intake_cases (client_id, sha256);
                 CREATE INDEX IF NOT EXISTS document_intake_cases_invoice_duplicate_idx
                     ON document_intake_cases (client_id, invoice_duplicate_key);
 

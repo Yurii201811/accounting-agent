@@ -12,7 +12,18 @@ from accounting_agent.adapters.gnubok import (
     ShadowLedgerAdapter,
     mirror_supplier_invoice_proposal_to_shadow,
 )
+from accounting_agent.client_identity import (
+    canonical_client_id,
+    client_storage_key,
+    scoped_identity_hash,
+)
 from accounting_agent.db import LocalQueue
+from accounting_agent.policy import (
+    ActionType,
+    PolicyContext,
+    PolicyDecision,
+    evaluate_policy,
+)
 from accounting_agent.risk_review import (
     AccountingCase,
     InvoiceHistoryEntry,
@@ -42,12 +53,14 @@ class SupplierInvoicePipeline:
         client_id: str = "fixture_client",
         shadow_ledger_adapter: ShadowLedgerAdapter | None = None,
         enable_shadow_ledger: bool = True,
+        evaluation_date: date | None = None,
     ) -> None:
-        self.client_id = client_id
+        self.client_id = canonical_client_id(client_id)
         self.queue = LocalQueue(db_path) if db_path else None
         self.output_dir = Path(output_dir) if output_dir else None
         self.shadow_ledger_adapter = shadow_ledger_adapter
         self.enable_shadow_ledger = enable_shadow_ledger
+        self.evaluation_date = evaluation_date
         self._seen_signatures: dict[str, dict[str, Any]] = {}
 
     def process_fixture_dir(self, fixtures_dir: str | Path) -> list[dict[str, Any]]:
@@ -59,11 +72,13 @@ class SupplierInvoicePipeline:
         fixture = json.loads(path.read_text(encoding="utf-8"))
         file_hash = sha256_file(path)
         now = utc_now()
-        case_id = f"si_{file_hash[:12]}"
+        scoped_case_hash = scoped_identity_hash(self.client_id, file_hash)
+        case_id = f"si_{scoped_case_hash[:12]}"
         extracted = extract_invoice_fields(fixture)
-        invoice_signature = build_invoice_signature(extracted)
+        invoice_signature = build_invoice_signature(extracted, client_id=self.client_id)
         case = {
             "case_id": case_id,
+            "client_id": self.client_id,
             "fixture_name": fixture.get("scenario", path.stem),
             "source_path": str(path),
             "file_hash": file_hash,
@@ -94,11 +109,25 @@ class SupplierInvoicePipeline:
             supplier_match=supplier_match,
             duplicate_check=duplicate_check,
             vat_proposal=vat_proposal,
+            today=self.evaluation_date,
         )
         policy_decision = decide_policy(risk)
         policy_decision = apply_openclaw_findings_to_policy_decision(
             policy_decision,
             risk_findings,
+        )
+        canonical_context = build_supplier_invoice_policy_context(
+            client_id=self.client_id,
+            extracted=extracted,
+            supplier_match=supplier_match,
+            duplicate_check=duplicate_check,
+            vat_proposal=vat_proposal,
+            risk_findings=risk_findings,
+        )
+        canonical_decision = evaluate_policy(canonical_context)
+        policy_decision = apply_canonical_policy_decision(
+            policy_decision,
+            canonical_decision,
         )
         fortnox_payload = build_fortnox_payload(
             case, extracted, supplier_match, accounting_proposal, policy_decision
@@ -128,6 +157,16 @@ class SupplierInvoicePipeline:
             fortnox_payload=fortnox_payload,
             shadow_ledger_comparison=shadow_ledger_comparison,
         )
+        packet["run_context"] = {
+            "evaluation_date": (
+                self.evaluation_date.isoformat() if self.evaluation_date else None
+            ),
+            "evaluation_date_source": (
+                "explicit" if self.evaluation_date else "system_clock"
+            ),
+            "client_id": self.client_id,
+            "jurisdiction_pack": "se-2026",
+        }
 
         packet_path = self._write_packet(packet)
         packet["packet_path"] = str(packet_path)
@@ -147,9 +186,31 @@ class SupplierInvoicePipeline:
     def _check_duplicate(self, invoice_signature: str, case_id: str) -> dict[str, Any]:
         duplicate: dict[str, Any] | None = None
         if self.queue:
-            duplicate = self.queue.find_duplicate_signature(invoice_signature, case_id)
+            duplicate = self.queue.find_duplicate_signature(
+                invoice_signature,
+                case_id,
+                client_id=self.client_id,
+            )
         if duplicate is None:
             duplicate = self._seen_signatures.get(invoice_signature)
+
+        if duplicate and duplicate.get("scope_status") == "legacy_unscoped_review":
+            return {
+                "status": "possible_duplicate",
+                "scope_status": "legacy_unscoped_review",
+                "duplicate_of_case_id": None,
+                "duplicate_source_path": None,
+                "flags": [
+                    {
+                        "code": "possible_duplicate",
+                        "severity": "high",
+                        "message": (
+                            "A matching v0.1 queue row has no verified client owner. "
+                            "Map the legacy queue explicitly before continuing."
+                        ),
+                    }
+                ],
+            }
 
         if duplicate and duplicate.get("case_id") != case_id:
             return {
@@ -304,6 +365,49 @@ def apply_openclaw_findings_to_policy_decision(
     return decision
 
 
+def apply_canonical_policy_decision(
+    policy_decision: dict[str, Any],
+    canonical_decision: PolicyDecision,
+) -> dict[str, Any]:
+    """Make the typed policy engine the single authority for action mode."""
+
+    decision = dict(policy_decision)
+    mode = canonical_decision.permission_mode.value
+    decision["mode"] = mode
+    decision["policy_version"] = canonical_decision.policy_version
+    decision["canonical_policy_reasons"] = canonical_decision.reasons
+    decision["required_reviews"] = canonical_decision.required_reviews
+    if mode == "draft_only":
+        decision["decision"] = "local_packet_ready"
+        decision["required_human_decision"] = (
+            "Confirm the accounting proposal before any future ERP draft or posting step."
+        )
+    elif mode == "approval_required":
+        decision["decision"] = "blocked_until_human_review"
+        decision["required_human_decision"] = (
+            "An accountant must resolve the policy reasons before any future ERP draft."
+        )
+    elif mode == "escalation_required":
+        decision["decision"] = "blocked_until_escalation_review"
+        decision["required_human_decision"] = (
+            "Senior or specialist review is required before any future ERP draft."
+        )
+    else:
+        decision["decision"] = "blocked_by_policy"
+        decision["required_human_decision"] = (
+            "Stop this case and resolve the blocking policy finding; no permit may be issued."
+        )
+    exact_action = dict(decision.get("exact_proposed_external_action") or {})
+    if mode != "draft_only" and exact_action.get("action", "").startswith("prepare_"):
+        exact_action = {
+            "action": "none_until_policy_reviewed",
+            "reason": "The canonical policy gate requires review before any ERP-shaped draft.",
+            "live_api_call": False,
+        }
+    decision["exact_proposed_external_action"] = exact_action
+    return decision
+
+
 def build_openclaw_risk_findings(
     *,
     case: dict[str, Any],
@@ -313,6 +417,7 @@ def build_openclaw_risk_findings(
     supplier_match: dict[str, Any],
     duplicate_check: dict[str, Any],
     vat_proposal: dict[str, Any],
+    today: date | None = None,
 ) -> tuple[RiskFinding, ...]:
     return review_accounting_case(
         AccountingCase(
@@ -343,7 +448,34 @@ def build_openclaw_risk_findings(
                 supplier_match,
                 duplicate_check,
             ),
-        )
+        ),
+        today=today,
+    )
+
+
+def build_supplier_invoice_policy_context(
+    *,
+    client_id: str,
+    extracted: dict[str, Any],
+    supplier_match: dict[str, Any],
+    duplicate_check: dict[str, Any],
+    vat_proposal: dict[str, Any],
+    risk_findings: tuple[RiskFinding, ...],
+) -> PolicyContext:
+    return PolicyContext(
+        action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+        client_id=client_id,
+        amount_minor=minor_amount(extracted["amounts"].get("gross")),
+        supplier_known=supplier_match.get("status") == "matched",
+        bank_details_changed=supplier_match.get("bank_details_status") == "changed",
+        duplicate_risk=(
+            1.0 if duplicate_check.get("status") == "possible_duplicate" else 0.0
+        ),
+        vat_confidence=1.0 if vat_proposal.get("status") == "normal" else 0.5,
+        ocr_confidence=float(extracted.get("extraction_confidence") or 0.0),
+        period_locked=bool(extracted.get("period_locked", False)),
+        risk_findings=risk_findings,
+        risk_evidence_complete=True,
     )
 
 
@@ -507,9 +639,14 @@ def parse_date(value: Any) -> date | None:
         return None
 
 
-def build_invoice_signature(extracted: dict[str, Any]) -> str:
+def build_invoice_signature(
+    extracted: dict[str, Any],
+    *,
+    client_id: str = "fixture_client",
+) -> str:
     supplier_key = extracted.get("supplier_org_number") or extracted.get("supplier_name") or "unknown"
     parts = [
+        client_storage_key(canonical_client_id(client_id)),
         str(supplier_key).casefold(),
         str(extracted.get("invoice_number") or "").casefold(),
         str(extracted.get("invoice_date") or ""),

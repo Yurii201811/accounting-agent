@@ -1,0 +1,28 @@
+{
+  "date": "2026-07-10",
+  "phase": "before",
+  "framework": "vanilla Python-generated static HTML",
+  "font_stack": "system UI stack in embedded CSS",
+  "palette": "hard-coded restrained light palette in embedded CSS",
+  "motion": "motion-cut; no motion dependency",
+  "spacing": "ad hoc spacing; no token scale",
+  "preserve": [
+    "offline static rendering",
+    "read-only safety boundary",
+    "plain-language operational tone"
+  ],
+  "introduce": [
+    "modern-minimal Workbench macrostructure",
+    "Cobalt OKLCH tokens",
+    "4-point spacing scale",
+    "accessible command navigation",
+    "structural responsive behavior"
+  ],
+  "result": {
+    "font_stack": "Avenir Next display, system body, mono only for code",
+    "palette": "Cobalt semantic OKLCH tokens in packaged tokens.css",
+    "motion": "single restrained transform with complete reduced-motion fallback",
+    "spacing": "named 4-point spacing scale",
+    "responsive": "verified at 320, 375, 414, 768, 1280 and 1425 CSS pixels"
+  }
+}

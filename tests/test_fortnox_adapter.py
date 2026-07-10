@@ -233,14 +233,14 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         payload = _supplier_invoice_payload(adapter)
         permit = _permit_for(ActionType.DRAFT_SUPPLIER_INVOICE, payload)
 
-        with self.assertRaisesRegex(FortnoxPolicyViolation, "draft_only permits"):
+        with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
                 payload=payload,
                 permit=permit,
             )
 
-    def test_live_supplier_invoice_draft_uses_transport_after_permit_and_config(self) -> None:
+    def test_live_supplier_invoice_draft_remains_blocked_after_permit_and_config(self) -> None:
         transport = MockFortnoxTransport()
         transport.add_post(
             "/supplierinvoices",
@@ -262,16 +262,13 @@ class FortnoxDraftCreateTests(unittest.TestCase):
             approved_reviews=("accountant_review",),
         )
 
-        result = adapter.create_supplier_invoice_draft(
-            case_id="case_1",
-            payload=payload,
-            permit=permit,
-        )
-
-        self.assertEqual("draft_created", result.status)
-        self.assertEqual("1001", result.external_reference)
-        self.assertEqual("/supplierinvoices", transport.posts[0][0])
-        self.assertEqual(permit.idempotency_key, transport.posts[0][2])
+        with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
+            adapter.create_supplier_invoice_draft(
+                case_id="case_1",
+                payload=payload,
+                permit=permit,
+            )
+        self.assertEqual([], transport.posts)
 
     def test_http_transport_post_requires_execution_permit(self) -> None:
         transport = HttpFortnoxTransport(
@@ -282,7 +279,7 @@ class FortnoxDraftCreateTests(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(FortnoxPolicyViolation, "permit"):
+        with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             transport.post(
                 "/supplierinvoices",
                 json_body={"SupplierInvoice": {"Booked": False}},
@@ -302,7 +299,7 @@ class FortnoxDraftCreateTests(unittest.TestCase):
             approved_reviews=("accountant_review",),
         )
 
-        with self.assertRaises(MissingFortnoxCredentials):
+        with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
                 payload=payload,
@@ -329,20 +326,18 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         )
         permit = _permit_for(ActionType.DRAFT_VOUCHER, payload)
 
-        result = adapter.create_voucher_draft(
-            case_id="case_1",
-            payload=payload,
-            permit=permit,
-        )
-
-        self.assertEqual("dry_run_voucher_payload_prepared_only", result.status)
-        self.assertTrue(result.dry_run)
+        with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
+            adapter.create_voucher_draft(
+                case_id="case_1",
+                payload=payload,
+                permit=permit,
+            )
 
     def test_forbidden_payload_markers_are_blocked(self) -> None:
         adapter = FortnoxAdapter(
             config=FortnoxConfig(
                 access_token="test-token",
-                dry_run=False,
+                dry_run=True,
                 allow_draft_writes=True,
             ),
             transport=MockFortnoxTransport(),

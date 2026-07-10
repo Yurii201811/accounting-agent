@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from decimal import Decimal
 from typing import Iterable
+import unicodedata
 
 from .models import BankTransaction, MatchCandidate, MatchTarget
 
@@ -20,6 +20,7 @@ def build_candidates(
     candidates = [
         candidate
         for target in targets
+        if _target_is_available(target)
         if (candidate := score_candidate(transaction, target)) is not None
     ]
     return sorted(
@@ -128,16 +129,19 @@ def duplicate_transaction_risks(
     transactions: Iterable[BankTransaction],
 ) -> dict[str, float]:
     transaction_list = list(transactions)
-    signatures = [_duplicate_signature(transaction) for transaction in transaction_list]
-    counts = Counter(signatures)
-    risks: dict[str, float] = {}
-    for transaction, signature in zip(transaction_list, signatures, strict=True):
-        risks[transaction.transaction_id] = 0.85 if counts[signature] > 1 else 0.0
+    risks = {transaction.transaction_id: 0.0 for transaction in transaction_list}
+    for index, transaction in enumerate(transaction_list):
+        for candidate in transaction_list[index + 1 :]:
+            if not _looks_like_duplicate(transaction, candidate):
+                continue
+            risks[transaction.transaction_id] = 0.85
+            risks[candidate.transaction_id] = 0.85
     return risks
 
 
 def normalize_reference(value: str | None) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(character for character in normalized if character.isalnum())
 
 
 def normalize_counterparty(value: str | None) -> str:
@@ -199,10 +203,37 @@ def _date_delta_days(transaction: BankTransaction, target: MatchTarget) -> int:
     return abs((transaction.date - comparison_date).days)
 
 
-def _duplicate_signature(transaction: BankTransaction) -> tuple[str, int, str, str]:
+def _duplicate_signature(transaction: BankTransaction) -> tuple[str, int, str, str, str]:
     return (
         transaction.currency,
         transaction.amount_minor,
         normalize_reference(transaction.reference),
         normalize_counterparty(transaction.counterparty),
+        normalize_reference(transaction.bank_account),
+    )
+
+
+def _looks_like_duplicate(
+    first: BankTransaction,
+    second: BankTransaction,
+    *,
+    date_window_days: int = 3,
+) -> bool:
+    """Return whether two bank rows need duplicate review.
+
+    The bank-account boundary and a narrow date window avoid treating recurring
+    monthly payments as duplicates while still catching adjacent imported rows.
+    """
+
+    return (
+        _duplicate_signature(first) == _duplicate_signature(second)
+        and abs((first.date - second.date).days) <= date_window_days
+    )
+
+
+def _target_is_available(target: MatchTarget) -> bool:
+    """Only open targets with a non-zero residual may receive proposals."""
+
+    return target.status.casefold() in {"open", "partially_open", "partial"} and (
+        target.expected_amount_minor != 0
     )

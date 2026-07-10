@@ -27,6 +27,18 @@ from .adapters import (
     mirror_supplier_invoice_proposal_to_shadow,
 )
 from .audit import AuditEvent, JsonlAuditLog
+from .agentic import (
+    AgentBudget,
+    AgenticWorkPlan,
+    EvidenceReference,
+    InterfaceMode,
+    RoleProfile,
+    SpecialistDefinition,
+    SpecialistId,
+    agentic_platform_summary,
+    build_agentic_work_plan,
+    list_role_profiles,
+)
 from .bank_reconciliation import (
     BankReconciliationPipeline,
     BankTransaction,
@@ -43,6 +55,19 @@ from .external_writes import (
     ExternalWriteAdapter,
     ExternalWriteResult,
     FortnoxWriteAdapter,
+)
+from .erp import (
+    COMPUTER_USE_BOUNDARY,
+    CapabilityDeclaration,
+    CapabilityMode,
+    ComputerUseBoundary,
+    ErpCapability,
+    ErpProfile,
+    ErpProvider,
+    assert_fail_closed_registry,
+    erp_registry_summary,
+    get_erp_profile,
+    list_erp_profiles,
 )
 from .hermes import (
     ApprovalPacket,
@@ -93,6 +118,15 @@ from .policy import (
     PolicyDecision,
     evaluate_policy,
 )
+from .jurisdictions import (
+    CurrencySpec,
+    JurisdictionPack,
+    TaxRuleMetadata,
+    get_currency_spec,
+    get_jurisdiction_pack,
+    jurisdiction_registry_summary,
+    list_jurisdiction_packs,
+)
 from .reports import RiskReport, build_risk_report
 from .risk_review import (
     AccountingCase,
@@ -118,7 +152,7 @@ from .restricted_fortnox_mcp import (
 )
 from .workflow import CaseReviewResult, review_supplier_invoice_case
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
@@ -126,6 +160,8 @@ __all__ = [
     "AccountingCase",
     "AccountingCaseType",
     "AccountingEntry",
+    "AgentBudget",
+    "AgenticWorkPlan",
     "AccountPlan",
     "AmountThresholds",
     "ApprovalPacket",
@@ -134,11 +170,20 @@ __all__ = [
     "BankReconciliationPipeline",
     "BankTransaction",
     "CaseReviewResult",
+    "CapabilityDeclaration",
+    "CapabilityMode",
     "ClientMapper",
     "ClientMappingResult",
     "ClientMappingRule",
+    "COMPUTER_USE_BOUNDARY",
+    "ComputerUseBoundary",
+    "CurrencySpec",
     "DEFAULT_FORTNOX_BASE_URL",
     "EmailWriteAdapter",
+    "ErpCapability",
+    "ErpProfile",
+    "ErpProvider",
+    "EvidenceReference",
     "ExecutionPermit",
     "ExtractionTask",
     "ExternalWriteAdapter",
@@ -161,6 +206,8 @@ __all__ = [
     "IntakeSource",
     "IntakeSourceType",
     "InvoiceMetadata",
+    "InterfaceMode",
+    "JurisdictionPack",
     "JsonlAuditLog",
     "LocalGnubokShadowLedgerAdapter",
     "LocalIntakeProcessor",
@@ -194,26 +241,41 @@ __all__ = [
     "RiskReviewConfig",
     "RiskSeverity",
     "RiskSignal",
+    "RoleProfile",
     "ReviewDecision",
     "SQLiteIntakeStore",
     "SQLitePermitStore",
     "ShadowLedgerComparison",
     "ShadowLedgerUnavailable",
     "SupplierInvoiceProposal",
+    "SpecialistDefinition",
+    "SpecialistId",
+    "TaxRuleMetadata",
     "ToolCallAuditLog",
     "ToolCallLogEntry",
     "UnknownRestrictedTool",
     "build_risk_report",
+    "agentic_platform_summary",
+    "assert_fail_closed_registry",
+    "build_agentic_work_plan",
     "build_candidates",
     "build_reconciliation_proposal",
     "canonical_payload_hash",
     "draft_missing_info_email",
     "evaluate_policy",
+    "erp_registry_summary",
     "expected_purchase_vat_mapping",
     "extract_invoice_metadata",
     "file_sha256",
     "fortnox_supplier_invoice_payload",
+    "get_currency_spec",
+    "get_erp_profile",
+    "get_jurisdiction_pack",
+    "jurisdiction_registry_summary",
     "load_fixture_catalog",
+    "list_erp_profiles",
+    "list_jurisdiction_packs",
+    "list_role_profiles",
     "manual_upload_source",
     "mirror_supplier_invoice_proposal_to_shadow",
     "onedrive_file_source",

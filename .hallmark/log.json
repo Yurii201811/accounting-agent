@@ -1,0 +1,34 @@
+[
+  {
+    "date": "2026-07-10",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt",
+    "enrichment": "none",
+    "nav": "N13 inline command palette",
+    "footer": "Ft2 inline rule",
+    "scope": "app",
+    "brief": "Provider-neutral accounting operations cockpit for guided and expert review",
+    "pre_emit_critique": {
+      "P": 4,
+      "H": 5,
+      "E": 4,
+      "S": 5,
+      "R": 4,
+      "V": 4
+    },
+    "slop_test": {
+      "gates": 58,
+      "result": "pass",
+      "open_gates": [],
+      "viewports_checked": [320, 375, 414, 768, 1280, 1425],
+      "notes": [
+        "Number markers represent real workflow sequence, not decorative section scaffolding.",
+        "No horizontal overflow, wrapped clickable labels, raw guided-mode codes, or unsafe motion remained."
+      ]
+    },
+    "impeccable": {
+      "result": "pass_with_advisory",
+      "advisory": "numbered-section-markers_false_positive_for_workflow_sequence"
+    }
+  }
+]
