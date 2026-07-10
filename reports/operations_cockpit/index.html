@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounting Agent Operations Cockpit</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f7f6;
+  --panel: #ffffff;
+  --text: #17211d;
+  --muted: #5b6863;
+  --line: #d9e0dc;
+  --green: #0b7a52;
+  --green-soft: #dff3e9;
+  --amber: #9a5c00;
+  --amber-soft: #fff1d6;
+  --red: #a93434;
+  --red-soft: #fde2df;
+  --blue: #255c8a;
+  --blue-soft: #e2edf6;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+code {
+  background: #eef2f0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 5px;
+  font-size: 0.92em;
+}
+.shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 44px; }
+.top {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+.eyebrow { margin: 0 0 6px; color: var(--blue); font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: 0; }
+h1 { margin: 0; font-size: 34px; line-height: 1.1; letter-spacing: 0; }
+h2 { margin: 0; font-size: 20px; letter-spacing: 0; }
+h3 { margin: 0; font-size: 15px; letter-spacing: 0; }
+.subtitle { max-width: 760px; margin: 10px 0 0; color: var(--muted); font-size: 17px; }
+.stamp {
+  min-width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  padding: 12px;
+}
+.stamp span, .metric span, .artifact-list em, .queue-list em { display: block; color: var(--muted); font-size: 12px; font-style: normal; }
+.stamp strong { display: block; margin-top: 3px; font-size: 14px; overflow-wrap: anywhere; }
+.panel, .safety {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  margin-top: 16px;
+}
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+  margin-bottom: 14px;
+}
+.section-heading p { margin: 0; color: var(--muted); max-width: 560px; }
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  min-height: 76px;
+}
+.metric strong { display: block; margin-top: 8px; font-size: 18px; overflow-wrap: anywhere; }
+.metric.ok, .metric.zero { background: var(--green-soft); border-color: #b7dfcc; }
+.metric.warn { background: var(--amber-soft); border-color: #efd29c; }
+.metric.status { background: var(--blue-soft); border-color: #c7d9e8; }
+.inline-block { margin-top: 14px; }
+.mini-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+}
+.mini-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.banner {
+  background: var(--red-soft);
+  border: 1px solid #f3b4ad;
+  color: #70211f;
+  border-radius: 7px;
+  padding: 12px;
+  font-weight: 700;
+}
+.warning-strip {
+  margin-top: 12px;
+  background: var(--amber-soft);
+  border: 1px solid #efd29c;
+  border-radius: 7px;
+  padding: 12px;
+}
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 14px;
+}
+.checklist, .command-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+.checklist li, .command-list li { margin: 7px 0; }
+.allowed li::marker { color: var(--green); }
+.blocked li::marker { color: var(--red); }
+.workflow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.workflow-step {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  min-height: 156px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workflow-step p { margin: 0; color: var(--muted); }
+.workflow-step.available { border-color: #b7dfcc; background: #f4fbf7; }
+.workflow-step.review_required, .workflow-step.dry_run_only { border-color: #efd29c; background: #fffaf0; }
+.workflow-step.missing { border-color: #e3c0bd; background: #fff7f5; }
+.step-number { color: var(--muted); font-weight: 700; }
+.step-meta {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.queues {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.queue-card {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  min-width: 0;
+}
+.queue-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.queue-head strong {
+  min-width: 34px;
+  border-radius: 999px;
+  background: #eef2f0;
+  text-align: center;
+  padding: 3px 8px;
+}
+.queue-list, .artifact-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.queue-list li, .artifact-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border-top: 1px solid var(--line);
+  padding: 9px 0;
+}
+.queue-list li:first-child, .artifact-list li:first-child { border-top: 0; }
+.queue-list span, .artifact-list span { min-width: 0; overflow-wrap: anywhere; }
+.artifact-list .missing strong { color: var(--amber); }
+.artifact-list .available strong { color: var(--green); }
+.muted { color: var(--muted); margin: 0; }
+footer { color: var(--muted); margin-top: 18px; }
+@media (max-width: 900px) {
+  .top, .split, .section-heading { grid-template-columns: 1fr; display: grid; }
+  .metrics, .workflow, .queues, .mini-list { grid-template-columns: 1fr 1fr; }
+  .queue-list li, .artifact-list li { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .shell { width: min(100% - 20px, 1180px); padding-top: 18px; }
+  h1 { font-size: 28px; }
+  .metrics, .workflow, .queues, .mini-list { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main class="shell">
+<section class="top">
+  <div>
+    <p class="eyebrow">Read-only local dashboard</p>
+    <h1>Accounting Agent Operations Cockpit</h1>
+    <p class="subtitle">One static view over the local MVP workflow, safety state, review queues, generated outputs, and current blockers.</p>
+  </div>
+  <div class="stamp">
+    <span>Generated</span>
+    <strong>2026-07-10T18:30:33+00:00</strong>
+  </div>
+</section>
+<section class="panel">
+  <div class="section-heading">
+    <h2>Operational status</h2>
+    <p>Local artifacts only. No provider calls are made to build this page.</p>
+  </div>
+  <div class="metrics">
+  <article class="metric status">
+    <span>Last run</span>
+    <strong>2026-07-10T18:30:33+00:00</strong>
+  </article>
+  <article class="metric ok">
+    <span>Local readiness</span>
+    <strong>local_fake_client_dry_run_complete</strong>
+  </article>
+  <article class="metric ok">
+    <span>Demo readiness</span>
+    <strong>supplier_invoice_demo_complete</strong>
+  </article>
+  <article class="metric zero">
+    <span>Live Fortnox calls</span>
+    <strong>0</strong>
+  </article>
+  <article class="metric zero">
+    <span>Live Microsoft 365 calls</span>
+    <strong>0</strong>
+  </article>
+  <article class="metric zero">
+    <span>Emails / payments / filings</span>
+    <strong>0</strong>
+  </article></div>
+  <div class="inline-block">
+    <h3>Local SQLite counts</h3>
+    <p class="muted">No local SQLite queue counts found yet.</p>
+  </div>
+</section>
+<section class="safety">
+  <div class="banner">Observe and review only. This cockpit never executes accounting actions and is not an approval authority.</div>
+  
+  <div class="warning-strip">
+    <strong>Policy alignment warnings</strong>
+    <ul><li>fc_01_office_supplies: pipeline_and_execution_gate_modes_differ</li><li>fc_02_it_support: pipeline_and_execution_gate_modes_differ</li><li>fc_04_studio_monitor: pipeline_and_execution_gate_modes_differ</li><li>fc_05_meeting_room: pipeline_and_execution_gate_modes_differ</li><li>fc_06_mobile_subscription: pipeline_and_execution_gate_modes_differ</li><li>fc_07_cleaning: pipeline_and_execution_gate_modes_differ</li></ul>
+  </div>
+  <div class="split">
+    <div>
+      <h2>Allowed boundaries</h2>
+      <ul class="checklist allowed"><li>Read repo-local synthetic fixtures and generated metadata.</li><li>Build approval packets, summaries, reports, and this static cockpit.</li><li>Prepare Fortnox-shaped payloads in dry-run mode only.</li><li>Mirror proposals into the local gnubok shadow validation stub.</li><li>Generate bank reconciliation proposals and review packets locally.</li></ul>
+    </div>
+    <div>
+      <h2>Blocked boundaries</h2>
+      <ul class="checklist blocked"><li>Live Fortnox calls, final posting, supplier invoice approval, payments, deletes, or settings changes.</li><li>Live Microsoft Graph, email sending, client communication, payment initiation, or tax filing.</li><li>Real client documents, secrets, credentials, tokens, bank secrets, or broad tenant data.</li><li>Using gnubok, Obsidian, reports, or this cockpit as an execution authority.</li></ul>
+    </div>
+  </div>
+</section>
+<section class="panel">
+  <div class="section-heading">
+    <h2>Workflow map</h2>
+    <p>Intake through audit/report, with current local evidence attached where present.</p>
+  </div>
+  <div class="workflow">
+  <article class="workflow-step available">
+    <span class="step-number">01</span>
+    <h3>Intake</h3>
+    <p>15 normalized intake cases from synthetic local exports.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/normalized_intake_cases.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">02</span>
+    <h3>Document registry</h3>
+    <p>Synthetic document registry and hashes are present in local SQLite/output artifacts.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/demo.sqlite">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">03</span>
+    <h3>Extraction</h3>
+    <p>15 extracted invoice JSON artifacts.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">04</span>
+    <h3>Accounting proposal</h3>
+    <p>15 BAS/VAT accounting proposal artifacts.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/summary.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step review_required">
+    <span class="step-number">05</span>
+    <h3>Policy gate</h3>
+    <p>14 items need approval, escalation, or stop handling.</p>
+    <div class="step-meta"><span>review required</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">06</span>
+    <h3>Approval packet</h3>
+    <p>15 supplier approval packet JSON files.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step dry_run_only">
+    <span class="step-number">07</span>
+    <h3>Execution permit</h3>
+    <p>15 local permit records; live use remains blocked.</p>
+    <div class="step-meta"><span>dry run only</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step dry_run_only">
+    <span class="step-number">08</span>
+    <h3>Fortnox dry-run</h3>
+    <p>15 Fortnox-shaped dry-run payload files; live calls are 0.</p>
+    <div class="step-meta"><span>dry run only</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">09</span>
+    <h3>gnubok shadow validation</h3>
+    <p>15 local shadow-ledger comparison files.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">10</span>
+    <h3>Bank reconciliation</h3>
+    <p>20 bank reconciliation proposals.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/bank_reconciliation_proposals.json">Evidence</a></div>
+  </article>
+  <article class="workflow-step available">
+    <span class="step-number">11</span>
+    <h3>Audit/report</h3>
+    <p>36 top-level audit events plus Markdown report.</p>
+    <div class="step-meta"><span>available</span><a href="../../.local/fake_client_dry_run/audit_log.jsonl">Evidence</a></div>
+  </article></div>
+</section>
+<section class="panel">
+  <div class="section-heading">
+    <h2>Review queues</h2>
+    <p>Cases are derived from generated approval packets, policy decisions, and bank reconciliation proposals.</p>
+  </div>
+  <div class="queues">
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Approval required</h3>
+      <strong>11</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_31c6f137a2f9</strong><em>supplier invoice · approval_required</em></span>
+        <span>risk:locked_old_period</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_31c6f137a2f9_fc_03_monthly_office_rent.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_9f0e2411faf7</strong><em>supplier invoice · approval_required</em></span>
+        <span>risk:duplicate_risk, risk:locked_old_period</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_9f0e2411faf7_fc_10_duplicate_office_supplies.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_bd0fd3c19bfb</strong><em>supplier invoice · approval_required</em></span>
+        <span>risk:duplicate_risk, risk:locked_old_period</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_bd0fd3c19bfb_fc_11_duplicate_it_support.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_1e46b77bcf76</strong><em>supplier invoice · approval_required</em></span>
+        <span>risk:unclear_vat</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_1e46b77bcf76_fc_13_uncertain_vat.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_29fd58833e8d</strong><em>supplier invoice · approval_required</em></span>
+        <span>risk:unknown_supplier, risk:unclear_vat, risk:low_ocr_confidence</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_29fd58833e8d_fc_15_ambiguous_private_receipt.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>br_FC-BANK-001</strong><em>bank reconciliation · approval_required</em></span>
+        <span>Review the match evidence and approve, reject, or reassign the proposed reconciliation.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-001.bank_reconciliation_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>br_FC-BANK-002</strong><em>bank reconciliation · approval_required</em></span>
+        <span>Review the match evidence and approve, reject, or reassign the proposed reconciliation.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-002.bank_reconciliation_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>br_FC-BANK-004</strong><em>bank reconciliation · approval_required</em></span>
+        <span>Confirm whether the partial payment should be allocated to the selected open item and whether a residual remains open.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-004.bank_reconciliation_packet.json">Open</a>
+      </li></ul><p class="muted">3 more items not shown.</p>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Escalation required</h3>
+      <strong>2</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_69e21317fcd4</strong><em>supplier invoice · escalation_required</em></span>
+        <span>risk:changed_bank_details</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_69e21317fcd4_fc_12_changed_bank_details.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>br_FC-BANK-020</strong><em>bank reconciliation · escalation_required</em></span>
+        <span>Senior/accounting review must classify the transaction, confirm the match, and decide whether a future guarded draft workflow is appropriate.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-020.bank_reconciliation_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Forbidden</h3>
+      <strong>1</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_cee7269564e5</strong><em>supplier invoice · forbidden</em></span>
+        <span>risk:locked_old_period</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_cee7269564e5_fc_14_old_locked_period.approval_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Missing info</h3>
+      <strong>3</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>br_FC-BANK-004</strong><em>bank reconciliation · approval_required</em></span>
+        <span>Classify transaction or supply better match evidence.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-004.bank_reconciliation_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>br_FC-BANK-019</strong><em>bank reconciliation · approval_required</em></span>
+        <span>Classify transaction or supply better match evidence.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-019.bank_reconciliation_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>br_FC-BANK-020</strong><em>bank reconciliation · escalation_required</em></span>
+        <span>Classify transaction or supply better match evidence.</span>
+        <a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-020.bank_reconciliation_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Risky suppliers</h3>
+      <strong>2</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_69e21317fcd4</strong><em>supplier invoice · escalation_required</em></span>
+        <span>fc_12_changed_bank_details: payment details changed</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_69e21317fcd4_fc_12_changed_bank_details.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_29fd58833e8d</strong><em>supplier invoice · approval_required</em></span>
+        <span>fc_15_ambiguous_private_receipt: supplier status unknown</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_29fd58833e8d_fc_15_ambiguous_private_receipt.approval_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Duplicate risk</h3>
+      <strong>2</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_9f0e2411faf7</strong><em>supplier invoice · approval_required</em></span>
+        <span>fc_10_duplicate_office_supplies: duplicate risk</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_9f0e2411faf7_fc_10_duplicate_office_supplies.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_bd0fd3c19bfb</strong><em>supplier invoice · approval_required</em></span>
+        <span>fc_11_duplicate_it_support: duplicate risk</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_bd0fd3c19bfb_fc_11_duplicate_it_support.approval_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Changed bank details</h3>
+      <strong>1</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_69e21317fcd4</strong><em>supplier invoice · escalation_required</em></span>
+        <span>fc_12_changed_bank_details: changed bank details</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_69e21317fcd4_fc_12_changed_bank_details.approval_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Uncertain VAT</h3>
+      <strong>2</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>si_1e46b77bcf76</strong><em>supplier invoice · approval_required</em></span>
+        <span>fc_13_uncertain_vat: VAT status manual_review</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_1e46b77bcf76_fc_13_uncertain_vat.approval_packet.json">Open</a>
+      </li>
+      <li>
+        <span><strong>si_29fd58833e8d</strong><em>supplier invoice · approval_required</em></span>
+        <span>fc_15_ambiguous_private_receipt: VAT status manual_review</span>
+        <a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_29fd58833e8d_fc_15_ambiguous_private_receipt.approval_packet.json">Open</a>
+      </li></ul>
+  </article>
+  <article class="queue-card">
+    <div class="queue-head">
+      <h3>Policy alignment warnings</h3>
+      <strong>6</strong>
+    </div>
+    <ul class="queue-list">
+      <li>
+        <span><strong>fc_01_office_supplies</strong><em>policy alignment · warning</em></span>
+        <span>pipeline_and_execution_gate_modes_differ</span>
+        
+      </li>
+      <li>
+        <span><strong>fc_02_it_support</strong><em>policy alignment · warning</em></span>
+        <span>pipeline_and_execution_gate_modes_differ</span>
+        
+      </li>
+      <li>
+        <span><strong>fc_04_studio_monitor</strong><em>policy alignment · warning</em></span>
+        <span>pipeline_and_execution_gate_modes_differ</span>
+        
+      </li>
+      <li>
+        <span><strong>fc_05_meeting_room</strong><em>policy alignment · warning</em></span>
+        <span>pipeline_and_execution_gate_modes_differ</span>
+        
+      </li>
+      <li>
+        <span><strong>fc_06_mobile_subscription</strong><em>policy alignment · warning</em></span>
+        <span>pipeline_and_execution_gate_modes_differ</span>
+        
+      </li>
+      <li>
+        <span><strong>fc_07_cleaning</strong><em>policy alignment · warning</em></span>
+        <span>pipeline_and_execution_gate_modes_differ</span>
+        
+      </li></ul>
+  </article></div>
+</section>
+<section class="panel">
+  <div class="section-heading">
+    <h2>Artifact links</h2>
+    <p>Links are only emitted for existing repo-local targets.</p>
+  </div>
+  <ul class="artifact-list">
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/manifest.json">Fake-client manifest</a><em>manifest</em></span>
+        <span>full synthetic month run</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/summary.json">Fake-client summary</a><em>summary</em></span>
+        <span>counts and readiness</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/audit_log.jsonl">Fake-client audit log</a><em>audit log</em></span>
+        <span>append-only local events</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_proposals.json">Bank reconciliation proposals</a><em>bank proposals</em></span>
+        <span>local proposal batch</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json">Supplier autopilot manifest</a><em>manifest</em></span>
+        <span>supplier workflow output</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/summary.json">Supplier autopilot summary</a><em>summary</em></span>
+        <span>supplier workflow counts</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/manifest.json">Local demo manifest</a><em>manifest</em></span>
+        <span>small fixture demo</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/summary.json">Local demo summary</a><em>summary</em></span>
+        <span>small fixture counts</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../docs/fake_client_dry_run_report.md">Fake-client report</a><em>report</em></span>
+        <span>operator report</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../docs/accounting_agent_architecture.md">Architecture doc</a><em>doc</em></span>
+        <span>system boundaries</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../docs/fortnox_adapter.md">Fortnox adapter doc</a><em>doc</em></span>
+        <span>dry-run adapter boundary</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../docs/gnubok_shadow_ledger.md">gnubok shadow ledger doc</a><em>doc</em></span>
+        <span>shadow validation boundary</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../docs/bank_reconciliation_autopilot.md">Bank reconciliation doc</a><em>doc</em></span>
+        <span>bank proposal workflow</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../docs/local_demo_supplier_invoice_autopilot.md">Supplier autopilot doc</a><em>doc</em></span>
+        <span>local demo workflow</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_29fd58833e8d_fc_15_ambiguous_private_receipt.approval_packet.json">Supplier approval packet: si_29fd58833e8d_fc_15_ambiguous_private_receipt.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_cee7269564e5_fc_14_old_locked_period.approval_packet.json">Supplier approval packet: si_cee7269564e5_fc_14_old_locked_period.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_1e46b77bcf76_fc_13_uncertain_vat.approval_packet.json">Supplier approval packet: si_1e46b77bcf76_fc_13_uncertain_vat.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_69e21317fcd4_fc_12_changed_bank_details.approval_packet.json">Supplier approval packet: si_69e21317fcd4_fc_12_changed_bank_details.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_bd0fd3c19bfb_fc_11_duplicate_it_support.approval_packet.json">Supplier approval packet: si_bd0fd3c19bfb_fc_11_duplicate_it_support.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/json/si_9f0e2411faf7_fc_10_duplicate_office_supplies.approval_packet.json">Supplier approval packet: si_9f0e2411faf7_fc_10_duplicate_office_supplies.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/markdown/si_29fd58833e8d.md">Supplier review packet: si_29fd58833e8d</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/markdown/si_cee7269564e5.md">Supplier review packet: si_cee7269564e5</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/markdown/si_1e46b77bcf76.md">Supplier review packet: si_1e46b77bcf76</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/markdown/si_69e21317fcd4.md">Supplier review packet: si_69e21317fcd4</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/markdown/si_bd0fd3c19bfb.md">Supplier review packet: si_bd0fd3c19bfb</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/approval_packets/markdown/si_9f0e2411faf7.md">Supplier review packet: si_9f0e2411faf7</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/fortnox_dry_run_payloads/fc_15_ambiguous_private_receipt.json">Fortnox dry-run payload: fc_15_ambiguous_private_receipt</a><em>dry-run payload</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/fortnox_dry_run_payloads/fc_14_old_locked_period.json">Fortnox dry-run payload: fc_14_old_locked_period</a><em>dry-run payload</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/fortnox_dry_run_payloads/fc_13_uncertain_vat.json">Fortnox dry-run payload: fc_13_uncertain_vat</a><em>dry-run payload</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/fortnox_dry_run_payloads/fc_12_changed_bank_details.json">Fortnox dry-run payload: fc_12_changed_bank_details</a><em>dry-run payload</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/fortnox_dry_run_payloads/fc_11_duplicate_it_support.json">Fortnox dry-run payload: fc_11_duplicate_it_support</a><em>dry-run payload</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/fortnox_dry_run_payloads/fc_10_duplicate_office_supplies.json">Fortnox dry-run payload: fc_10_duplicate_office_supplies</a><em>dry-run payload</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/gnubok_shadow_outputs/fc_15_ambiguous_private_receipt.json">gnubok shadow output: fc_15_ambiguous_private_receipt</a><em>shadow output</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/gnubok_shadow_outputs/fc_14_old_locked_period.json">gnubok shadow output: fc_14_old_locked_period</a><em>shadow output</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/gnubok_shadow_outputs/fc_13_uncertain_vat.json">gnubok shadow output: fc_13_uncertain_vat</a><em>shadow output</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/gnubok_shadow_outputs/fc_12_changed_bank_details.json">gnubok shadow output: fc_12_changed_bank_details</a><em>shadow output</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/gnubok_shadow_outputs/fc_11_duplicate_it_support.json">gnubok shadow output: fc_11_duplicate_it_support</a><em>shadow output</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/supplier_invoice_autopilot/gnubok_shadow_outputs/fc_10_duplicate_office_supplies.json">gnubok shadow output: fc_10_duplicate_office_supplies</a><em>shadow output</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-020.bank_reconciliation_packet.json">Bank reconciliation packet: br_FC-BANK-020.bank_reconciliation_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-019.bank_reconciliation_packet.json">Bank reconciliation packet: br_FC-BANK-019.bank_reconciliation_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-008.bank_reconciliation_packet.json">Bank reconciliation packet: br_FC-BANK-008.bank_reconciliation_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-005.bank_reconciliation_packet.json">Bank reconciliation packet: br_FC-BANK-005.bank_reconciliation_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-004.bank_reconciliation_packet.json">Bank reconciliation packet: br_FC-BANK-004.bank_reconciliation_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/fake_client_dry_run/bank_reconciliation_packets/br_FC-BANK-002.bank_reconciliation_packet.json">Bank reconciliation packet: br_FC-BANK-002.bank_reconciliation_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/approval_packets/json/si_a7b53a7a0ad7_uncertain_vat_extraction.approval_packet.json">Demo approval packet: si_a7b53a7a0ad7_uncertain_vat_extraction.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/approval_packets/json/si_0f1c8f9ea0ea_changed_bank_details.approval_packet.json">Demo approval packet: si_0f1c8f9ea0ea_changed_bank_details.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/approval_packets/json/si_42171f52f478_unknown_supplier.approval_packet.json">Demo approval packet: si_42171f52f478_unknown_supplier.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/approval_packets/json/si_fdad0dcc892d_possible_duplicate_invoice.approval_packet.json">Demo approval packet: si_fdad0dcc892d_possible_duplicate_invoice.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li>
+      <li class="available">
+        <span><a href="../../.local/demo_supplier_invoice_autopilot/approval_packets/json/si_d5bd5323abf6_normal_swedish_25_vat.approval_packet.json">Demo approval packet: si_d5bd5323abf6_normal_swedish_25_vat.approval_packet</a><em>approval packet</em></span>
+        <span>latest local file</span>
+        <strong>available</strong>
+      </li></ul>
+</section>
+<section class="panel">
+  <div class="split">
+    <div>
+      <h2>Safe next actions</h2>
+      <ul class="command-list"><li><code>python3 -m accounting_agent.cli fake-client-dry-run</code></li><li><code>python3 -m accounting_agent.cli demo-supplier-invoice-autopilot</code></li><li><code>python3 -m accounting_agent.cli process-fixtures</code></li><li><code>python3 -m accounting_agent.cli reconcile-bank-fixtures</code></li><li><code>python3 -m accounting_agent.cli build-operations-cockpit</code></li><li><code>python3 -m unittest</code></li></ul>
+    </div>
+    <div>
+      <h2>Not allowed</h2>
+      <ul class="checklist blocked"><li>Create live Fortnox supplier invoices, vouchers, payments, or final postings.</li><li>Approve supplier invoices or send customer invoices.</li><li>Send emails or contact clients from MVP code.</li><li>Call Microsoft Graph, Fortnox, payment, tax, or filing APIs.</li><li>Process real client documents or write secrets into the repo.</li></ul>
+    </div>
+  </div>
+</section>
+<footer>
+  <p>Source root: <code>/Users/yuriibakurov/Documents/Accounting Agent</code></p>
+  <p>This file is static HTML with embedded CSS. It uses no server, CDN, external asset, or live integration.</p>
+</footer>
+</main>
+</body>
+</html>
