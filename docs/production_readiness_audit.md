@@ -8,9 +8,12 @@ readiness baseline, but some findings listed here were partially fixed during
 the post-implementation audit: external-write policy evidence now fails closed
 when omitted, the permit issuer re-checks policy decisions, the permit
 validator enforces idempotency binding, the raw HTTP Fortnox transport is no
-longer exported from the package root and requires a matching permit for POST,
+longer exported from the package root and always rejects POST before network access,
 restricted MCP draft tools require explicit risk evidence, and demo output
-cleanup now refuses unmarked existing folders.
+cleanup now refuses unmarked existing folders. A later v1 hardening pass also
+added immutable reviewer identities/decisions and an exact approval-to-permit
+receipt bridge for local, test, preview, and dry-run environments. The
+production recommendation below remains NO-GO.
 
 Scope: repository code, configs, tests, docs, synthetic fixtures, local CLI demos, Fortnox adapter boundary, Microsoft 365 intake prototype, gnubok shadow ledger, Hermes approval helpers, restricted Fortnox MCP facade, and the current bank-reconciliation prototype.
 
@@ -20,7 +23,12 @@ Scope: repository code, configs, tests, docs, synthetic fixtures, local CLI demo
 
 The system is suitable for **synthetic local fixtures and dry-run-only development**. It is not yet suitable for production accounting, real mailbox/file intake, Fortnox credentials, real supplier invoices, real bank statements, or any client data.
 
-The most important reason is not one missing feature. It is that the current safety model is still an in-process prototype: policy inputs default to safe values, permits are ordinary Python objects without an approval-store trust anchor, idempotency is process-local by default, audit logs are not tamper-evident, local storage is plaintext, and client isolation/retention are not implemented.
+The most important reason is not one missing feature. The safety model remains
+an in-process prototype: reviewed permit issuance now uses a local immutable
+approval-store trust anchor, but permit receipts are not signed, adapters do not
+reload them from an independently protected service, idempotency is process-local
+by default, local storage is plaintext, and production client
+isolation/retention are not implemented.
 
 ## What Changed During This Audit
 
@@ -28,8 +36,11 @@ Small urgent fail-closed fixes were implemented:
 
 - Added `.gitignore` coverage for local databases, JSONL logs, `.env` files, token/credential folders, runtime artifacts, and client/private accounting material (`.gitignore:1`).
 - Added a repository safety test that asserts those ignore patterns remain present (`tests/test_repository_safety.py:10`).
-- Hardened `FortnoxAdapter` so non-dry-run supplier-invoice draft creation rejects `draft_only` permits and requires an approval/escalation permit with recorded approved reviews (`accounting_agent/adapters/fortnox.py:410`, `accounting_agent/adapters/fortnox.py:627`).
-- Added/updated Fortnox tests proving `draft_only` permits are rejected for live draft writes and reviewed permits are required for the live-write path (`tests/test_fortnox_adapter.py:222`).
+- Hardened `FortnoxAdapter` so every non-dry-run supplier-invoice draft and raw
+  HTTP POST is structurally disabled before network access; configuration and
+  permits cannot enable either path.
+- Added/updated Fortnox tests proving both live draft surfaces remain disabled
+  with credentials, configuration, and otherwise valid permits.
 - Added a policy test proving live bank reconciliation remains forbidden (`tests/test_policy_and_permits.py:130`).
 
 Verification after fixes:
@@ -48,22 +59,25 @@ Verification after fixes:
 | Synthetic supplier-invoice fixtures | Local fixture pipeline, tests, dry-run payloads, approval packets | Safe now for local synthetic data | Go for fixtures only |
 | Local Microsoft 365 intake prototype | Local folder scan only, no Graph client, duplicate detection | Safe only in dry-run/local sample mode | No real mailbox or OneDrive |
 | Fortnox reference reads | Adapter exists, credentials required for real transport, sensitive reads disabled by default | Requires fix before real use | No real credentials yet |
-| Fortnox supplier-invoice draft write | Permit-gated, dry-run default, live path now requires reviewed permit, but trust anchor is still weak | Safe only in dry-run | No live Fortnox write |
+| Fortnox supplier-invoice draft write | Local dry-run only; non-dry-run draft and raw HTTP POST raise before network access | Safe only in dry-run | No live Fortnox write |
 | Fortnox voucher/posting/finalization | Policy and adapter forbid posting/payment/sending/final actions | Forbidden | Keep forbidden |
 | Email send | `EmailWriteAdapter` validates permits but never sends; Hermes only drafts | Safe only as draft text | No send path |
 | Microsoft Graph tokens/data | No real adapter or token store implemented | Requires fix | No real Graph connection |
 | gnubok shadow ledger | Local stub, advisory/fail-soft, Fortnox remains source of truth | Safe only with synthetic/local dry-run data | No real client data |
 | Bank reconciliation | Prototype code exists; live reconciliation is forbidden by policy | Requires fix | No Fortnox reconciliation |
-| Client separation | `fixture_client`/`unmapped` placeholders; shared local SQLite/storage | Requires fix | No multi-client or real-client use |
-| Audit trail | JSONL/SQLite local records, no hash chain/signing/immutable storage | Requires fix | Not production-grade |
+| Client separation | Supplier queue is explicit client + entity scope; other local stores still lack a complete production tenant boundary | Requires fix | No real-client use |
+| Audit trail | Hash-chained local events and immutable approval records exist; no independent anchoring, signing, or protected service | Requires fix | Not production-grade |
 | Data retention/deletion | No retention, deletion, legal hold, export, or purge workflow | Requires fix | No real data |
-| Test coverage | Good unit coverage for current core plus local demo and bank-reconciliation fixture tests; gaps remain in bypass/property/live-adapter tests | Requires fix | Not enough for production |
+| Test coverage | Dual-runtime unit/integration suites cover current local controls and bypass cases; no provider sandbox or production acceptance evidence | Requires fix | Not enough for production |
 
 ## Critical Blockers
 
-### P0-1: Policy can be bypassed by omission of risk facts
+### P0-1: Production policy evidence still needs an independently trusted source
 
-`PolicyContext` defaults are optimistic: known supplier/customer, zero duplicate risk, full VAT/OCR confidence, unlocked period, no bank-detail change (`accounting_agent/policy.py:105`). That means a caller or agent can omit inconvenient evidence and get `draft_only` for low-amount external-write proposals (`accounting_agent/policy.py:60`, `accounting_agent/policy.py:147`).
+External-write callers must now set `risk_evidence_complete=True`; omission fails
+closed to review. A malicious in-process caller can still falsely assert that
+the evidence is complete, so production must derive this signal from persisted,
+independently protected case facts rather than trust caller input.
 
 Production fix:
 
@@ -71,22 +85,30 @@ Production fix:
 - Unknown supplier, unknown duplicate state, unknown VAT confidence, unknown bank-detail state, unknown client mapping, or missing source document must fail to `approval_required` or `escalation_required`.
 - Add tests where each missing risk signal fails closed.
 
-### P0-2: Permits are not bound to a trusted approval authority
+### P0-2: Local approval-to-permit binding added; production trust boundary remains
 
-`PermitIssuer.issue(...)` accepts `approved_reviews` as caller-supplied strings and emits a normal dataclass (`accounting_agent/permits.py:207`). `PermitValidator` validates payload hash, case, action, expiry, and reviews (`accounting_agent/permits.py:260`), but it does not verify that reviews came from a human-controlled approval request, role store, or immutable approval ledger.
+Current v1 code rejects caller-supplied `approved_reviews`. Reviewed permits
+require an exact immutable `ApprovalRequest` reloaded through a configured
+`TrustedApprovalAuthority`; the receipt is bound to client, entity, case,
+action, payload, policy decision, evidence hashes, provider, environment, and
+the recorded decision ids. `SQLiteApprovalStore` enforces verified active
+reviewer identities, client scope, required roles, no self-approval, independent
+reviewers, immutability, rejection, and expiry.
 
-Production fix:
+Remaining production work:
 
-- Add an approval request table/store with reviewer identity, role, timestamp, decision, and no self-approval.
-- Make adapters validate permits by looking up the permit id in the trusted store, not just by trusting an in-memory object.
-- Include approval request id, issuer, environment, adapter, client id, source document ids, and execution scope in the permit.
-- Consider signing or HMACing permit records if they ever cross process boundaries.
+- Require every future production adapter instance to use the trusted-store and
+  approval-authority validator configuration; the local default can validate
+  low-risk synthetic permits without those external trust services.
+- Move approval and permit records behind an independently protected service and
+  authenticated operator boundary.
+- Sign or MAC-protect permit receipts before they cross process boundaries.
 
 ### P0-3: Raw adapter and transport classes are importable bypass surfaces
 
 The restricted MCP facade fails unknown and hidden tools closed. After the
 post-implementation audit, `HttpFortnoxTransport` is no longer exported from the
-package root and its `POST` method requires a matching permit, but raw Python
+package root and its `POST` method raises before network access, but raw Python
 module imports are still not a production capability boundary. A production
 agent runtime must not expose raw adapter or transport classes/tools to LLM
 agents.
@@ -99,7 +121,10 @@ Production fix:
 
 ### P0-4: Idempotency is not durable by default
 
-The default idempotency store is in-memory (`accounting_agent/idempotency.py:35`), so duplicate prevention disappears on process restart. `FortnoxAdapter` does check idempotency before write (`accounting_agent/adapters/fortnox.py:415`), but production writes need a persistent, atomic reservation before the external call and durable completion after the response.
+The default adapter idempotency store is in-memory, so the local dry-run
+duplicate simulation disappears on process restart. There is no live write in
+this phase; any future production writer would need a persistent, atomic
+reservation before an external call and durable completion after the response.
 
 Production fix:
 
@@ -108,16 +133,21 @@ Production fix:
 - Persist request hash, response reference, status, and retry state.
 - Add crash/retry tests.
 
-### P0-5: Audit trail is local and not tamper-evident
+### P0-5: Hash-chained events remain locally anchored
 
-`JsonlAuditLog` appends JSONL with key-based redaction (`accounting_agent/audit.py:55`, `accounting_agent/audit.py:110`), and SQLite stores audit rows (`accounting_agent/db.py:66`). But there is no hash chain, signature, filesystem permission check, immutable mode, actor authentication, or deletion prevention beyond normal local files.
+The v1 evidence layer adds a concurrency-safe hash-chained event log, tail
+deletion detection against a separate local head, and redaction metadata.
+Because both chain and head remain local, an operator with filesystem authority
+can still replace them together. There is no signature, independent anchor,
+actor authentication service, immutable storage mode, or deletion prevention.
 
 Production fix:
 
-- Add append-only event schema with hash chaining.
-- Record actor identity, role, source system, before/after policy mode, adapter result, and approval/permit ids.
+- Anchor or sign event heads outside the application storage boundary.
+- Record authenticated actor identity, role, source system, before/after policy
+  mode, adapter result, and approval/permit ids across every workflow.
 - Use a central redaction layer before any JSON/SQLite/Markdown output.
-- Add tamper-detection tests.
+- Add protected-storage replacement and restore tests.
 
 ### P0-6: Sensitive data is stored in plaintext local artifacts
 
@@ -130,9 +160,12 @@ Production fix:
 - Redacted reviewer packets with references to controlled document storage.
 - Data classification, retention periods, deletion/purge, export, and legal hold behavior.
 
-### P0-7: Client separation is not implemented
+### P0-7: Supplier-queue identity is explicit; remaining stores need production isolation
 
-Client mapping is placeholder-based. Unmatched intake becomes `client_id="unmapped"` by design, and the local demo uses `fixture_client` (`accounting_agent/local_demo.py:448`). There is no per-client database, storage root, credential profile, policy threshold set, or access boundary.
+The supplier queue now binds every row, duplicate signature, and case id to an
+explicit client and legal entity, and legacy rows remain unassigned until an
+audited mapping. General intake/evidence storage, credentials, retention, and
+operator authorization are not yet a complete production tenant boundary.
 
 Production fix:
 
@@ -140,14 +173,19 @@ Production fix:
 - Hard fail for unmapped sources before extraction or proposal work on real data.
 - Cross-client duplicate and metadata leak tests.
 
-### P0-8: Fortnox live write path still needs production-grade gates
+### P0-8: Fortnox live writes remain absent by design
 
-The live supplier-invoice draft path now requires a reviewed permit (`accounting_agent/adapters/fortnox.py:410`), and forbidden payload markers are blocked (`accounting_agent/adapters/fortnox.py:614`). Still missing: environment allowlist, persistent idempotency, trusted permit lookup, current Fortnox API semantic verification, response redaction, sandbox/prod separation, and proof that a Fortnox "draft" cannot post/book/approve/pay.
+Non-dry-run supplier-invoice draft creation and `HttpFortnoxTransport.post`
+raise before network access. The GET transport is credential-gated and sensitive
+reads are disabled by default, but it has not passed a real provider sandbox,
+telemetry, privacy, or accounting acceptance exercise.
 
 Production fix:
 
 - Keep all Fortnox behavior dry-run until a separate live-integration task.
-- For live sandbox only, require explicit environment gates, persistent permit/idempotency stores, and a test token outside repo.
+- Treat any future sandbox write adapter as a separate implementation requiring
+  explicit environment gates, persistent permit/idempotency stores, and a test
+  token outside the repository.
 - Production write enablement should remain separate from sandbox enablement.
 - Final posting, supplier invoice approval, payment, deletion, invoice sending, and settings changes remain forbidden.
 
@@ -175,8 +213,10 @@ Production fix:
 
 ## Bypass Paths To Close
 
-- Agent omits `duplicate_risk`, `vat_confidence`, or `bank_details_changed` and receives a lower policy mode.
-- Agent instantiates `PermitIssuer` and supplies fake review labels.
+- In-process caller falsely asserts `risk_evidence_complete=True`; production
+  must derive it from protected persisted facts.
+- Agent supplies fake review labels (now blocked by `PermitIssuer` and
+  `PermitValidator`; keep as a regression test).
 - Agent constructs an `ExecutionPermit` dataclass directly.
 - Agent imports raw `HttpFortnoxTransport` or `FortnoxAdapter` instead of using `RestrictedFortnoxMCP`.
 - Agent calls a future raw Fortnox MCP server if it is ever registered beside the restricted facade.
@@ -199,12 +239,15 @@ No-go reasons:
 
 ## Fortnox Safety
 
-Current state: dry-run by default; real writes require explicit config and reviewed permit after this audit hardening.
+Current state: local dry-run payloads only for writes. Non-dry-run draft creation
+and raw HTTP POST are structurally disabled. Credential-gated GET code exists
+but is not configured, exercised, or production-approved in this preview.
 
 No-go reasons:
 
 - Raw adapter/transport import surface remains.
-- Trusted approval authority is missing.
+- The local trusted approval authority is not a production-isolated service,
+  and receipts are not signed or reloaded adapter-side.
 - Persistent idempotency is missing.
 - Current Fortnox create semantics are not verified in this audit.
 - Error and response handling can still carry client data.
@@ -232,7 +275,9 @@ No-go reasons:
 
 1. Keep live Microsoft 365, Fortnox writes, email sending, client documents, payments, filings, deletes, settings changes, and supplier bank updates disabled.
 2. Implement fail-closed policy evidence: missing/unknown duplicate, VAT, OCR, supplier, bank-detail, client mapping, source document, or period state must not default to safe.
-3. Build a trusted approval and permit store: approval request id, actor, role, no self-approval, immutable event linkage, permit lookup by adapters.
+3. Promote the local trusted approval and permit stores into an independently
+   protected service with authenticated actors, immutable event linkage,
+   signed receipts, and adapter-side permit lookup.
 4. Add persistent idempotency and adapter event storage before any live Fortnox sandbox attempt.
 5. Lock down agent-facing tool exposure to the restricted facade only; add tool-inventory tests.
 6. Add encrypted per-client storage/database boundaries and hard fail for `unmapped` real sources.

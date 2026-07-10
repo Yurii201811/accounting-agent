@@ -46,12 +46,16 @@ The restricted MCP layer and the generic policy engine both forbid supplier-invo
 
 - Read-safe tools do not require execution permits, but they still require a client id and are logged.
 - Draft tools always require an execution permit, even when the policy decision is `draft_only`.
+- Every write-like payload requires an explicit entity id separate from the
+  client id; the restricted facade rejects cross-entity permit reuse.
 - Draft tools require explicit risk evidence fields in the payload: amount,
   supplier/customer known state, bank-detail change state, duplicate risk,
   VAT/OCR confidence, period lock state, new-supplier state, destructive-action
   state, communication state, and tax/payment state. Omitted evidence fails
   closed before the adapter boundary.
-- If a draft payload becomes higher risk, the policy decision can become `approval_required` or `escalation_required`; the permit must match that exact decision and approved review set.
+- If a draft payload becomes higher risk, the policy decision can become
+  `approval_required` or `escalation_required`; the permit must carry the exact
+  trusted approval receipt rather than caller-supplied review labels.
 - Locked periods, destructive flags, final posting, invoice sending, supplier-invoice approval, payments, tax filing, and deletion fail closed.
 - Unknown tools fail closed and are logged as denied.
 - Tool calls log metadata and payload hashes, not secrets or raw credentials.
@@ -66,7 +70,8 @@ Openclaw, Hermes, Codex, or any future agent should use this sequence:
 4. Evaluate the payload with `evaluate_policy(...)`.
 5. If review is required, create an approval packet and wait for the required human review outside the agent.
 6. Issue an `ExecutionPermit` for the exact payload.
-7. Call the restricted tool with `case_id`, payload, and permit.
+7. Call the restricted tool with `case_id`, explicit `entity_id` in the payload,
+   and permit.
 8. Store or forward the audit entry and draft result for reviewer visibility.
 
 Agents must not self-approve, mint permits without the required reviews, call hidden registry entries, or register raw Fortnox write tools.

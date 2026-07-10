@@ -20,8 +20,9 @@ deletes, or settings changes.
 - Constraints honored: no live Fortnox, no live Microsoft 365, no real client
   data, no email sending, no payment/tax/filing actions.
 
-The workspace is not a git repository, so git diff/status could not be used as
-an audit source.
+Historical note: the workspace was not a Git repository when this May audit was
+performed, so Git diff/status was not then available as an audit source. The
+current v1 worktree is a Git repository and release verification does use both.
 
 ## Critical/high fixes made
 
@@ -41,11 +42,16 @@ an audit source.
    `forbidden` write permits, expired permits, changed payload hashes, and
    reviewed modes without required review types.
 
-4. Fortnox raw HTTP POST is gated.
-   `HttpFortnoxTransport.post(...)` now requires a matching execution permit,
-   matching idempotency key, allowed action/path binding, reviewed live-draft
-   permit, and protected-payload checks before network access. The raw HTTP
-   transport is no longer exported from the package root.
+4. Reviewed permit issuance now requires the immutable approval store.
+   Caller-supplied review labels are rejected. The exact approval request is
+   reloaded through the trusted approval interface and bound to client, entity,
+   case, action, payload, policy, evidence, provider, and environment before a
+   receipt is embedded in the permit.
+
+5. Fortnox raw HTTP POST is structurally disabled.
+   `HttpFortnoxTransport.post(...)` raises before network access; configuration,
+   credentials, caller labels, and execution permits cannot enable it. The raw
+   HTTP transport is not exported from the package root.
 
 5. Restricted MCP draft tools now require explicit risk evidence.
    Omitted risk fields fail closed before the adapter boundary.
@@ -66,9 +72,9 @@ an audit source.
 | --- | --- | --- |
 | Fortnox adapter without permit | Pass | `create_supplier_invoice_draft` and legacy `FortnoxWriteAdapter` reject missing permits. |
 | Fortnox adapter with changed payload | Pass | Payload hash mismatch rejects execution. |
-| Fortnox live draft with `draft_only` permit | Pass | Non-dry-run supplier-invoice draft creation rejects `draft_only` permits. |
+| Fortnox live draft with any permit | Pass | Non-dry-run supplier-invoice draft creation and HTTP POST remain structurally disabled. |
 | Fortnox payload attempts to book/pay/send/delete | Pass | Protected payload markers such as booked/payment/sent/deleted are blocked. |
-| Direct Fortnox HTTP POST | Pass for MVP-0 | Raw HTTP POST now requires a matching permit before network access. |
+| Direct Fortnox HTTP POST | Pass for MVP-0 | Raw HTTP POST raises before network access; no permit or configuration can enable it. |
 | Restricted MCP hidden tools | Pass | Supplier approval, deletion, payment, invoice send, tax filing, and voucher posting tools are hidden/forbidden and denied even if called by name. |
 | Restricted MCP omitted risk evidence | Pass | Draft tools fail closed when risk evidence fields are omitted. |
 | Microsoft 365 intake | Pass for fake/local | Local file scan only; no Graph client, no send, no source move/delete. Unmapped client ids cannot proceed to low-risk external-write policy. |
@@ -79,8 +85,9 @@ an audit source.
 
 ## Unsafe direct-call inventory
 
-- Fortnox write endpoints: only `HttpFortnoxTransport` can make HTTP calls; POST
-  is now permit-gated and not exported from package root.
+- Fortnox write endpoints: `HttpFortnoxTransport.post` is structurally disabled
+  before network access and is not exported from the package root. Its GET
+  transport remains credential-gated and outside this synthetic audit.
 - Email sending: no SMTP/Graph send path; `EmailWriteAdapter` returns
   `permit_validated_no_email_sent`.
 - File deletion/move: no source move/delete path; only guarded demo output
@@ -107,11 +114,14 @@ an audit source.
 
 ## Remaining blockers for anything beyond fake-client dry run
 
-- No trusted human approval authority with reviewer identity, role, no
-  self-approval enforcement, and immutable approval linkage.
+- The local approval authority now enforces reviewer identity, role,
+  no-self-approval, independence, and immutable exact-scope linkage, but it is
+  not an independently protected production service and receipts are not
+  signed or reloaded adapter-side.
 - No production-grade persistent idempotency reservation/completion store for
   live writes.
-- Audit logs are local and not tamper-evident.
+- Hash-chained events exist, but their head and storage remain local rather than
+  independently anchored and production-protected.
 - Client isolation, encryption, retention, deletion, legal hold, and controlled
   document access are not implemented.
 - Real Microsoft Graph intake does not exist and must stay disabled.

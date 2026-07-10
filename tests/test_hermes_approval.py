@@ -30,6 +30,7 @@ def sample_supplier_invoice_packet() -> ApprovalPacket:
         PolicyContext(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             client_id="client_alpha",
+            currency_code="SEK",
             amount_minor=12_500_00,
             supplier_known=False,
             duplicate_risk=0.12,

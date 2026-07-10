@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "accounting-agent"
-version = "0.2.0"
+version = "1.0.0"
 description = "Sweden-first, provider-neutral accounting automation foundation."
 requires-python = ">=3.11"
 dependencies = []

@@ -139,6 +139,7 @@ class BankReconciliationAutopilotTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_BANK_RECONCILIATION,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=1_250_00,
                 ocr_confidence=0.99,
                 risk_evidence_complete=True,
@@ -148,6 +149,7 @@ class BankReconciliationAutopilotTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.RECONCILE_BANK_TRANSACTION,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=1_250_00,
             )
         )

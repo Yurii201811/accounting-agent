@@ -113,6 +113,7 @@ def policy_context_from_case(
     return PolicyContext(
         action_type=action_type,
         client_id=accounting_case.client_id,
+        currency_code=accounting_case.currency,
         amount_minor=accounting_case.amount_minor,
         supplier_known=accounting_case.supplier_known,
         bank_details_changed=has_signal(risk_findings, RiskSignal.CHANGED_BANK_DETAILS),

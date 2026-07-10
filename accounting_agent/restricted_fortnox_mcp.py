@@ -21,6 +21,7 @@ EXECUTION_PERMIT_REQUIRED = "execution_permit"
 NO_PERMIT_ISSUABLE = "not_issuable"
 WRITE_RISK_EVIDENCE_FIELDS = (
     "amount_minor",
+    "currency",
     "supplier_known",
     "customer_known",
     "bank_details_changed",
@@ -416,6 +417,9 @@ class RestrictedFortnoxMCP:
     ) -> dict[str, Any]:
         if case_id is None or not case_id.strip():
             raise RestrictedToolPermitError("write-like tools require a case_id")
+        entity_id = payload.get("entity_id")
+        if not isinstance(entity_id, str) or not entity_id.strip():
+            raise RestrictedToolPermitError("write-like tools require an explicit entity_id")
         context = _policy_context_from_payload(metadata.action_type, payload)
         decision = evaluate_policy(context)
         if decision.permission_mode is PermissionMode.FORBIDDEN:
@@ -428,6 +432,8 @@ class RestrictedFortnoxMCP:
             )
         if permit.client_id != context.client_id:
             raise RestrictedToolPermitError("execution permit client_id does not match payload")
+        if permit.entity_id != entity_id:
+            raise RestrictedToolPermitError("execution permit entity_id does not match payload")
         if permit.permission_mode is not decision.permission_mode:
             raise RestrictedToolPermitError(
                 "execution permit permission mode does not match current policy decision"
@@ -440,6 +446,7 @@ class RestrictedFortnoxMCP:
         adapter_result = self.fortnox_adapter.execute(
             action_type=metadata.action_type,
             case_id=case_id,
+            entity_id=entity_id,
             payload=payload,
             permit=permit,
         )
@@ -502,6 +509,7 @@ def _policy_context_from_payload(
     return PolicyContext(
         action_type=action_type,
         client_id=_required_text(payload, "client_id"),
+        currency_code=_required_text(payload, "currency"),
         amount_minor=_required_int(payload, "amount_minor"),
         supplier_known=_required_bool(payload, "supplier_known"),
         customer_known=_required_bool(payload, "customer_known"),

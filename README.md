@@ -10,17 +10,19 @@ packets, and records local evidence. It does not process real client data or
 post, approve, send, pay, delete, change ERP settings, file tax, or call a live
 provider.
 
-The v2 foundation adds versioned Swedish/international jurisdiction metadata,
-explicit capability declarations for Fortnox, NetSuite, Oracle Fusion, SAP
-S/4HANA, and generic imports/exports, plus a deterministic bounded-specialist
-plan. Those declarations are not live connectors and expose no external-write
-authority.
+Version 1 adds explicit legal-entity journals, evidence-bound approvals,
+dependency-aware close readiness, resumable preparation agents, guarded ERP
+read contracts, provider-neutral advisory-model routing, and a bilingual
+Guided/Expert cockpit. International support is a schema and jurisdiction-pack
+foundation, not a blanket compliance claim. Live provider writes remain
+forbidden.
 
 Inspect that machine-readable boundary:
 
 ```bash
 python3 -m accounting_agent.cli platform-status
 python3 -m accounting_agent.cli platform-status --json
+python3 -m accounting_agent.cli v1-system-check --json
 ```
 
 Run the complete local demo:
@@ -61,6 +63,16 @@ guidance perspective changes explanatory emphasis only; risk priority and
 safety policy remain fixed. It has no CDN or live-provider dependency and
 remains observe/review only.
 
+Build the separate deployable preview from built-in synthetic examples only:
+
+```bash
+python3 -m accounting_agent.cli build-public-preview \
+  --output .local/accounting-agent-v1-preview
+```
+
+The public builder never reads local workflow artifacts and refuses unexpected
+files in its target directory.
+
 Private course references, if present, stay under `.local/course_reference/`
 and are excluded from Git. They can inform topic coverage and plain-language
 explanations, but current official law, BFN, Skatteverket, BAS, and SIE sources
@@ -82,8 +94,10 @@ Fixture commands use an explicit 2026-05-16 evaluation date by default so risk
 outcomes do not change with the wall clock. Pass `--as-of YYYY-MM-DD` to the
 supplier fixture or demo command when testing a different review date.
 
-Start with `docs/accounting_platform_v2.md` for the product, jurisdiction, ERP,
-computer-use, and specialist-agent contract. See
+Start with `docs/accounting_agent_v1.md` for the product, jurisdiction, ERP,
+model, autonomy, computer-use, and release boundary. See
+`docs/local_model_evaluation.md` for the local Ollama comparison,
+`docs/v1_research_decisions.md` for the problem-to-product decisions,
 `docs/local_demo_supplier_invoice_autopilot.md` for the one-command local demo,
 `docs/mvp_supplier_invoice_autopilot.md` for the packet schema, and
 `docs/operations_cockpit.md` for the interface workflow.

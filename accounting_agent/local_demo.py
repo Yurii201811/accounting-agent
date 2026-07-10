@@ -64,6 +64,7 @@ def run_supplier_invoice_autopilot_demo(
     supplier_fixture_dir: str | Path = Path("fixtures/supplier_invoices"),
     output_dir: str | Path = DEFAULT_DEMO_OUTPUT,
     client_id: str = "fixture_client",
+    entity_id: str = "fixture_entity",
     evaluation_date: date = DEMO_EVALUATION_DATE,
 ) -> dict[str, Any]:
     """Run the complete local supplier-invoice demo and write stage artifacts."""
@@ -90,6 +91,7 @@ def run_supplier_invoice_autopilot_demo(
         db_path=paths["db"],
         output_dir=paths["approval_packets_json"],
         client_id=client_id,
+        entity_id=entity_id,
         evaluation_date=evaluation_date,
     )
     packets = pipeline.process_fixture_dir(fixture_dir)
@@ -270,6 +272,7 @@ def run_supplier_invoice_autopilot_demo(
             "evaluation_date": evaluation_date.isoformat(),
             "evaluation_date_source": "explicit_synthetic_scenario_date",
             "client_id": client_id,
+            "entity_id": entity_id,
             "jurisdiction_pack": "se-2026",
         },
         "cases": case_artifacts,
@@ -659,10 +662,12 @@ def _build_fortnox_dry_run_record(
         decision=policy_decision,
         context=policy_context,
         case_id=packet["case"]["case_id"],
+        entity_id=packet["case"]["entity_id"],
         payload=adapter_payload,
     )
     dry_run_result = adapter.create_supplier_invoice_draft(
         case_id=packet["case"]["case_id"],
+        entity_id=packet["case"]["entity_id"],
         payload=adapter_payload,
         permit=permit,
     )

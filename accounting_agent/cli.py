@@ -26,9 +26,12 @@ from accounting_agent.local_demo import (
 )
 from accounting_agent.operations_cockpit import (
     DEFAULT_OUTPUT_PATH as DEFAULT_OPERATIONS_COCKPIT_OUTPUT,
+    DEFAULT_PUBLIC_PREVIEW_DIR,
     build_operations_cockpit,
+    build_public_preview,
 )
 from accounting_agent.supplier_invoice import SupplierInvoicePipeline
+from accounting_agent.v1 import build_v1_platform_summary, run_v1_synthetic_system_check
 
 
 DEFAULT_FIXTURES = Path("fixtures/supplier_invoices")
@@ -51,6 +54,16 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES)
     process.add_argument("--db", type=Path, default=DEFAULT_DB)
     process.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    process.add_argument(
+        "--client-id",
+        default="fixture_client",
+        help="Exact synthetic tenant/client scope for this fixture run.",
+    )
+    process.add_argument(
+        "--entity-id",
+        default="fixture_entity",
+        help="Exact synthetic legal-entity scope for this fixture run.",
+    )
     process.add_argument(
         "--as-of",
         type=date.fromisoformat,
@@ -104,6 +117,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     cockpit.add_argument("--output", type=Path, default=DEFAULT_OPERATIONS_COCKPIT_OUTPUT)
 
+    public_preview = subparsers.add_parser(
+        "build-public-preview",
+        help="Build a deployable cockpit from built-in synthetic examples only.",
+    )
+    public_preview.add_argument("--output", type=Path, default=DEFAULT_PUBLIC_PREVIEW_DIR)
+
     platform_status = subparsers.add_parser(
         "platform-status",
         help="Show jurisdiction, ERP capability, computer-use, role, and specialist boundaries.",
@@ -114,11 +133,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Emit the complete machine-readable platform declaration.",
     )
 
+    v1_check = subparsers.add_parser(
+        "v1-system-check",
+        help="Exercise every v1 control-plane seam with deterministic synthetic data.",
+    )
+    v1_check.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the complete machine-readable system-check result.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "process-fixtures":
         pipeline = SupplierInvoicePipeline(
             db_path=args.db,
             output_dir=args.output,
+            client_id=args.client_id,
+            entity_id=args.entity_id,
             evaluation_date=args.as_of,
         )
         packets = pipeline.process_fixture_dir(args.fixtures)
@@ -231,7 +262,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "build-operations-cockpit":
-        result = build_operations_cockpit(output_path=args.output)
+        try:
+            result = build_operations_cockpit(output_path=args.output)
+        except (OSError, ValueError) as exc:
+            print(f"Operations cockpit build failed: {exc}", file=sys.stderr)
+            return 1
         print("Operations cockpit built")
         print(f"Output: {result.output_path}")
         print(f"Links checked: {result.link_targets_checked}")
@@ -245,8 +280,30 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.command == "build-public-preview":
+        try:
+            result = build_public_preview(output_dir=args.output)
+        except (OSError, ValueError) as exc:
+            print(f"Public preview build failed: {exc}", file=sys.stderr)
+            return 1
+        print("Synthetic public preview built")
+        print(f"Output: {result.output_path}")
+        print(f"Manifest: {result.output_path.parent / 'preview-manifest.json'}")
+        print(f"Links checked: {result.link_targets_checked}")
+        print(f"Broken links: {len(result.broken_links)}")
+        print(
+            "Source artifact links: 0; builder network/hosted-model/ERP-write "
+            "capabilities: unavailable"
+        )
+        if result.broken_links:
+            for path in result.broken_links:
+                print(f"- broken link target: {path}")
+            return 1
+        return 0
+
     if args.command == "platform-status":
         payload = {
+            "v1": build_v1_platform_summary(),
             "jurisdictions": jurisdiction_registry_summary(),
             "erp": erp_registry_summary(),
             "agentic": agentic_platform_summary(),
@@ -254,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
             return 0
-        print("Accounting Agent v2 platform boundary")
+        print("Accounting Agent v1 platform boundary")
         print("Default jurisdiction: se-2026 (foundation only, no filing claim)")
         print("ERP profiles:")
         for profile in payload["erp"]["profiles"]:
@@ -266,6 +323,19 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(payload['agentic']['specialists'])}; human decision gate required"
         )
         return 0
+
+    if args.command == "v1-system-check":
+        result = run_v1_synthetic_system_check()
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print("Accounting Agent v1 synthetic system check")
+            for check, passed in result["checks"].items():
+                print(f"- {check}: {'pass' if passed else 'fail'}")
+            print(f"Autonomy terminal: {result['autonomy_terminal']}")
+            print(f"Close terminal: {result['close_terminal']}")
+            print("External calls / hosted model calls / ERP writes: 0 / 0 / 0")
+        return 0 if result["passed"] else 1
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

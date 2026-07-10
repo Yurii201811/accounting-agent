@@ -87,6 +87,13 @@ BAS_FALLBACKS = {
     "event": ("6991", "Ovriga externa kostnader, avdragsgilla"),
 }
 
+SE_PREVIEW_SUPPLIER_CHART_ID = "se-bas-supplier-preview-2026-v1"
+SE_PREVIEW_SUPPLIER_ACCOUNTS = frozenset(
+    {"2440", "2641"}
+    | {str(supplier["default_bas_account"]) for supplier in SUPPLIERS.values()}
+    | {account for account, _name in BAS_FALLBACKS.values()}
+)
+
 FLAG_WEIGHTS = {
     "possible_duplicate": 35,
     "unknown_supplier": 30,
@@ -244,15 +251,20 @@ def propose_accounting(
             "credit": "0.00",
             "vat_code": "input_vat_25" if vat_proposal.get("vat_rate") == "25" else "input_vat_review",
             "description": extracted.get("description"),
-        },
-        {
-            "account": "2641",
-            "account_name": "Debiterad ingaende moms",
-            "debit": amounts.get("vat"),
-            "credit": "0.00",
-            "vat_code": "input_vat",
-            "description": "Input VAT from supplier invoice",
-        },
+        }
+    ]
+    if (as_decimal(amounts.get("vat")) or Decimal("0")) != 0:
+        entries.append(
+            {
+                "account": "2641",
+                "account_name": "Debiterad ingaende moms",
+                "debit": amounts.get("vat"),
+                "credit": "0.00",
+                "vat_code": "input_vat",
+                "description": "Input VAT from supplier invoice",
+            }
+        )
+    entries.append(
         {
             "account": "2440",
             "account_name": "Leverantorsskulder",
@@ -260,8 +272,8 @@ def propose_accounting(
             "credit": amounts.get("gross"),
             "vat_code": None,
             "description": "Supplier invoice payable, draft only",
-        },
-    ]
+        }
+    )
 
     return {
         "proposal_type": "supplier_invoice_accounting_proposal",

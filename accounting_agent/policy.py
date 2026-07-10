@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Mapping
 
 from .risk_review import RiskFinding
@@ -87,10 +88,20 @@ EXTERNAL_WRITE_ACTIONS = frozenset(
 
 @dataclass(frozen=True)
 class AmountThresholds:
-    """Amount thresholds in minor currency units, for example ore for SEK."""
+    """Thresholds in the explicitly bound currency's minor units."""
 
     draft_without_review_minor: int = 10_000_00
     escalation_required_minor: int = 100_000_00
+
+    def __post_init__(self) -> None:
+        for name in ("draft_without_review_minor", "escalation_required_minor"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.escalation_required_minor <= self.draft_without_review_minor:
+            raise ValueError(
+                "escalation_required_minor must exceed draft_without_review_minor"
+            )
 
 
 @dataclass(frozen=True)
@@ -98,18 +109,65 @@ class PolicyConfig:
     policy_version: str = POLICY_VERSION
     default_amount_thresholds: AmountThresholds = field(default_factory=AmountThresholds)
     client_amount_thresholds: Mapping[str, AmountThresholds] = field(default_factory=dict)
+    currency_amount_thresholds: Mapping[str, AmountThresholds] = field(default_factory=dict)
+    client_currency_amount_thresholds: Mapping[tuple[str, str], AmountThresholds] = field(
+        default_factory=dict
+    )
     minimum_vat_confidence: float = 0.90
     minimum_ocr_confidence: float = 0.85
     duplicate_review_threshold: float = 0.50
 
-    def amount_thresholds_for(self, client_id: str) -> AmountThresholds:
-        return self.client_amount_thresholds.get(client_id, self.default_amount_thresholds)
+    def __post_init__(self) -> None:
+        for currency, thresholds in self.currency_amount_thresholds.items():
+            _validate_currency_code(currency)
+            if not isinstance(thresholds, AmountThresholds):
+                raise TypeError("currency amount thresholds must be AmountThresholds")
+        for key, thresholds in self.client_currency_amount_thresholds.items():
+            if (
+                not isinstance(key, tuple)
+                or len(key) != 2
+                or not isinstance(key[0], str)
+                or not key[0].strip()
+            ):
+                raise ValueError(
+                    "client currency threshold keys must be (client_id, currency_code)"
+                )
+            _validate_currency_code(key[1])
+            if not isinstance(thresholds, AmountThresholds):
+                raise TypeError("client currency thresholds must be AmountThresholds")
+
+    def amount_thresholds_for(
+        self,
+        client_id: str,
+        currency_code: str,
+    ) -> AmountThresholds | None:
+        """Return thresholds only when they are explicitly valid for the currency.
+
+        The historical default/client mapping is the Sweden-pack SEK policy.
+        Every other currency needs an explicit global or client/currency entry.
+        """
+
+        explicit_client = self.client_currency_amount_thresholds.get(
+            (client_id, currency_code)
+        )
+        if explicit_client is not None:
+            return explicit_client
+        explicit_currency = self.currency_amount_thresholds.get(currency_code)
+        if explicit_currency is not None:
+            return explicit_currency
+        if currency_code == "SEK":
+            return self.client_amount_thresholds.get(
+                client_id,
+                self.default_amount_thresholds,
+            )
+        return None
 
 
 @dataclass(frozen=True)
 class PolicyContext:
     action_type: ActionType
     client_id: str
+    currency_code: str
     amount_minor: int = 0
     supplier_known: bool = True
     customer_known: bool = True
@@ -130,9 +188,10 @@ class PolicyContext:
 class PolicyDecision:
     action_type: ActionType
     client_id: str
+    currency_code: str
     permission_mode: PermissionMode
     policy_version: str
-    amount_thresholds: AmountThresholds
+    amount_thresholds: AmountThresholds | None
     required_reviews: tuple[str, ...]
     reasons: tuple[str, ...]
     is_external_write: bool
@@ -146,8 +205,8 @@ def evaluate_policy(
 
     config = config or PolicyConfig()
     action_type = ActionType(context.action_type)
-    thresholds = config.amount_thresholds_for(context.client_id)
     _validate_context(context)
+    thresholds = config.amount_thresholds_for(context.client_id, context.currency_code)
 
     mode = DEFAULT_ACTION_MODES.get(action_type, PermissionMode.APPROVAL_REQUIRED)
     reasons: list[str] = [f"default:{action_type.value}"]
@@ -177,6 +236,11 @@ def evaluate_policy(
         mode = _stricter(mode, PermissionMode.APPROVAL_REQUIRED)
         reasons.append("risk_evidence_incomplete")
         required_reviews.add("accountant_review")
+
+    if is_external_write and thresholds is None and mode is not PermissionMode.FORBIDDEN:
+        mode = _stricter(mode, PermissionMode.ESCALATION_REQUIRED)
+        reasons.append("currency_thresholds_not_configured")
+        required_reviews.update({"accountant_review", "senior_accountant_review"})
 
     if context.destructive_action or action_type in {
         ActionType.DELETE_RECORD,
@@ -209,12 +273,13 @@ def evaluate_policy(
                 {"accountant_review", "senior_accountant_review", "security_review"}
             )
 
-        if context.amount_minor >= thresholds.escalation_required_minor:
+        if thresholds is not None and context.amount_minor >= thresholds.escalation_required_minor:
             mode = _stricter(mode, PermissionMode.ESCALATION_REQUIRED)
             reasons.append("amount_exceeds_escalation_threshold")
             required_reviews.update({"accountant_review", "senior_accountant_review"})
         elif (
-            context.amount_minor > thresholds.draft_without_review_minor
+            thresholds is not None
+            and context.amount_minor > thresholds.draft_without_review_minor
             and is_external_write
         ):
             mode = _stricter(mode, PermissionMode.APPROVAL_REQUIRED)
@@ -265,6 +330,7 @@ def evaluate_policy(
     return PolicyDecision(
         action_type=action_type,
         client_id=context.client_id,
+        currency_code=context.currency_code,
         permission_mode=mode,
         policy_version=config.policy_version,
         amount_thresholds=thresholds,
@@ -285,11 +351,20 @@ def _ordered_reviews(required_reviews: set[str]) -> tuple[str, ...]:
 
 
 def _validate_context(context: PolicyContext) -> None:
+    _validate_currency_code(context.currency_code)
     if context.amount_minor < 0:
         raise ValueError("amount_minor must not be negative")
     _validate_confidence("duplicate_risk", context.duplicate_risk)
     _validate_confidence("vat_confidence", context.vat_confidence)
     _validate_confidence("ocr_confidence", context.ocr_confidence)
+
+
+_CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
+
+
+def _validate_currency_code(value: str) -> None:
+    if not isinstance(value, str) or not _CURRENCY_CODE.fullmatch(value):
+        raise ValueError("currency_code must be an uppercase three-letter code")
 
 
 def _validate_confidence(name: str, value: float) -> None:

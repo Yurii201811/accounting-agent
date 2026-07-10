@@ -15,6 +15,7 @@ def sample_supplier_invoice_proposal() -> SupplierInvoiceProposal:
         proposal_id="proposal_fixture_1",
         case_id="case_fixture_1",
         client_id="client_fixture",
+        entity_id="entity_fixture",
         supplier_id="supplier_42",
         supplier_name="Kontorsvaror AB",
         invoice_number="INV-2026-001",

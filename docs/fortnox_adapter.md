@@ -109,9 +109,11 @@ Voucher rows must balance. The current adapter can only dry-run voucher drafts.
 1. Prepare the payload locally.
 2. Build a matching `PolicyContext`.
 3. Call `evaluate_policy(context)`.
-4. Issue an `ExecutionPermit` with the exact payload.
-5. Call `create_supplier_invoice_draft(...)` or `create_voucher_draft(...)`.
-6. The adapter validates the permit, payload hash, policy version, expiry, and idempotency key before any write path is reached.
+4. Issue an `ExecutionPermit` with the exact payload and explicit entity id.
+5. Call `create_supplier_invoice_draft(...)` or `create_voucher_draft(...)`
+   with that same explicit entity id.
+6. The adapter validates the permit, entity, payload hash, policy version,
+   expiry, and entity-bound idempotency key before any write path is reached.
 7. Any non-dry configuration raises a policy violation before a network write.
 
 Default dry-run result:

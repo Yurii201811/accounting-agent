@@ -121,6 +121,10 @@ SQLite tables are created automatically by `accounting_agent.db.LocalQueue`:
 - `approval_packets`
 - `audit_events`
 
+Schema version 3 stores exact `client_id`, `entity_id`, and row-scope version on
+each table. Case identity, document hashes, invoice signatures, and duplicate
+lookups are scoped by both IDs. Version 1/2 rows remain unassigned and force a
+non-identifying legacy review stop until an operator explicitly maps both IDs.
 This keeps the pipeline output queue/database-ready without requiring a live
 Fortnox or Microsoft integration.
 
@@ -130,6 +134,13 @@ Run:
 
 ```bash
 python -m unittest
+```
+
+Fixture CLI runs bind both identities explicitly, for example:
+
+```bash
+python -m accounting_agent.cli process-fixtures \
+  --client-id fixture_client --entity-id fixture_entity
 ```
 
 The test suite verifies all five fixtures, packet generation, duplicate

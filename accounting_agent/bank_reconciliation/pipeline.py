@@ -138,12 +138,17 @@ def build_reconciliation_proposal(
         duplicate_risk=max(duplicate_risk, 0.85 if target_reused else 0.0),
     )
     matching_decision = evaluate_policy(
-        PolicyContext(action_type=ActionType.READ_ANALYSIS, client_id=client_id)
+        PolicyContext(
+            action_type=ActionType.READ_ANALYSIS,
+            client_id=client_id,
+            currency_code=transaction.currency,
+        )
     )
     live_reconciliation_decision = evaluate_policy(
         PolicyContext(
             action_type=ActionType.RECONCILE_BANK_TRANSACTION,
             client_id=client_id,
+            currency_code=transaction.currency,
             amount_minor=abs(transaction.amount_minor),
         )
     )
@@ -289,6 +294,7 @@ def _evaluate_proposal_policy(
         PolicyContext(
             action_type=ActionType.DRAFT_BANK_RECONCILIATION,
             client_id=client_id,
+            currency_code=transaction.currency,
             amount_minor=abs(transaction.amount_minor),
             supplier_known=supplier_known,
             customer_known=customer_known,

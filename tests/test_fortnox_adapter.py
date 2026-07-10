@@ -13,15 +13,17 @@ from accounting_agent import (
     InMemoryIdempotencyStore,
     MissingFortnoxCredentials,
     PermissionMode,
-    PermitIssuer,
     PermitValidationError,
+    PermitValidator,
     PolicyContext,
     evaluate_policy,
 )
 from accounting_agent.adapters.fortnox import HttpFortnoxTransport
+from tests.permit_approval_helpers import issue_test_permit
 
 
 PERMIT_ISSUED_AT = datetime.now(UTC).replace(microsecond=0)
+ENTITY_ID = "synthetic-test-entity"
 
 
 class MockFortnoxTransport:
@@ -172,6 +174,7 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         with self.assertRaises(PermitValidationError):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=None,
             )
@@ -185,11 +188,13 @@ class FortnoxDraftCreateTests(unittest.TestCase):
 
         first = adapter.create_supplier_invoice_draft(
             case_id="case_1",
+            entity_id=ENTITY_ID,
             payload=payload,
             permit=permit,
         )
         second = adapter.create_supplier_invoice_draft(
             case_id="case_1",
+            entity_id=ENTITY_ID,
             payload=payload,
             permit=permit,
         )
@@ -200,6 +205,19 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         self.assertEqual(first.idempotency_key, second.duplicate_of)
         self.assertEqual([], transport.posts)
 
+    def test_create_supplier_invoice_draft_rejects_cross_entity_permit(self) -> None:
+        adapter = FortnoxAdapter(transport=MockFortnoxTransport())
+        payload = _supplier_invoice_payload(adapter)
+        permit = _permit_for(ActionType.DRAFT_SUPPLIER_INVOICE, payload)
+
+        with self.assertRaisesRegex(PermitValidationError, "entity_id"):
+            adapter.create_supplier_invoice_draft(
+                case_id="case_1",
+                entity_id="different-entity",
+                payload=payload,
+                permit=permit,
+            )
+
     def test_live_supplier_invoice_draft_requires_explicit_config(self) -> None:
         transport = MockFortnoxTransport()
         adapter = FortnoxAdapter(
@@ -207,16 +225,22 @@ class FortnoxDraftCreateTests(unittest.TestCase):
             transport=transport,
         )
         payload = _supplier_invoice_payload(adapter)
-        permit = _permit_for(
+        permit, permit_store, approval_authority = _permit_for(
             ActionType.DRAFT_SUPPLIER_INVOICE,
             payload,
             amount_minor=50_000_00,
-            approved_reviews=("accountant_review",),
+            return_store=True,
+        )
+        adapter.permit_validator = PermitValidator(
+            clock=lambda: PERMIT_ISSUED_AT,
+            permit_store=permit_store,
+            approval_authority=approval_authority,
         )
 
         with self.assertRaises(FortnoxPolicyViolation):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )
@@ -236,6 +260,7 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )
@@ -259,12 +284,12 @@ class FortnoxDraftCreateTests(unittest.TestCase):
             ActionType.DRAFT_SUPPLIER_INVOICE,
             payload,
             amount_minor=50_000_00,
-            approved_reviews=("accountant_review",),
         )
 
         with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )
@@ -296,12 +321,12 @@ class FortnoxDraftCreateTests(unittest.TestCase):
             ActionType.DRAFT_SUPPLIER_INVOICE,
             payload,
             amount_minor=50_000_00,
-            approved_reviews=("accountant_review",),
         )
 
         with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )
@@ -329,6 +354,7 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         with self.assertRaisesRegex(FortnoxPolicyViolation, "structurally disabled"):
             adapter.create_voucher_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )
@@ -344,16 +370,22 @@ class FortnoxDraftCreateTests(unittest.TestCase):
         )
         payload = _supplier_invoice_payload(adapter)
         payload["SupplierInvoice"]["Booked"] = True
-        permit = _permit_for(
+        permit, permit_store, approval_authority = _permit_for(
             ActionType.DRAFT_SUPPLIER_INVOICE,
             payload,
             amount_minor=50_000_00,
-            approved_reviews=("accountant_review",),
+            return_store=True,
+        )
+        adapter.permit_validator = PermitValidator(
+            clock=lambda: PERMIT_ISSUED_AT,
+            permit_store=permit_store,
+            approval_authority=approval_authority,
         )
 
         with self.assertRaises(FortnoxProtectedOperation):
             adapter.create_supplier_invoice_draft(
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )
@@ -370,7 +402,7 @@ class FortnoxPolicyProtectionTests(unittest.TestCase):
             ActionType.CHANGE_SETTINGS,
         ):
             decision = evaluate_policy(
-                PolicyContext(action_type=action_type, client_id="client_123")
+                PolicyContext(action_type=action_type, client_id="client_123", currency_code="SEK")
             )
             self.assertEqual(
                 PermissionMode.FORBIDDEN,
@@ -396,26 +428,26 @@ def _permit_for(
     payload: dict[str, Any],
     *,
     amount_minor: int = 1_250_00,
-    approved_reviews: tuple[str, ...] = (),
+    return_store: bool = False,
 ):
     context = PolicyContext(
         action_type=action_type,
         client_id="client_123",
+        currency_code="SEK",
         amount_minor=amount_minor,
         risk_evidence_complete=True,
     )
-    decision = evaluate_policy(context)
-    issuer = PermitIssuer(
-        clock=lambda: PERMIT_ISSUED_AT,
-        id_factory=lambda: f"permit_{action_type.value}",
-    )
-    return issuer.issue(
-        decision=decision,
+    permit, _, permit_store, approval_authority = issue_test_permit(
         context=context,
         case_id="case_1",
         payload=payload,
-        approved_reviews=approved_reviews,
+        now=PERMIT_ISSUED_AT,
+        permit_id=f"permit_{action_type.value}",
+        entity_id=ENTITY_ID,
     )
+    if return_store:
+        return permit, permit_store, approval_authority
+    return permit
 
 
 if __name__ == "__main__":

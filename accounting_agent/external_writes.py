@@ -32,6 +32,7 @@ class ExternalWriteAdapter:
         *,
         action_type: ActionType,
         case_id: str,
+        entity_id: str,
         payload: Any,
         permit: ExecutionPermit | None,
     ) -> ExternalWriteResult:
@@ -41,6 +42,7 @@ class ExternalWriteAdapter:
         self.permit_validator.require_valid(
             permit=permit,
             case_id=case_id,
+            entity_id=entity_id,
             action_type=action_type,
             payload=payload,
         )

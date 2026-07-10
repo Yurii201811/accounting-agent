@@ -47,6 +47,7 @@ def run_fake_client_dry_run(
         supplier_fixture_dir=sample_paths["supplier_invoices"],
         output_dir=paths["supplier_output"],
         client_id=sample["profile"]["client_id"],
+        entity_id=sample["profile"]["entity_id"],
     )
 
     bank_pipeline = BankReconciliationPipeline(
@@ -123,6 +124,7 @@ def run_fake_client_dry_run(
 def build_fake_client_month() -> dict[str, Any]:
     profile = {
         "client_id": "fake-se-service-001",
+        "entity_id": "fake-se-legal-entity-001",
         "display_name": "Fiktiv Konsultstudio AB",
         "fake_data_notice": (
             "Synthetic fake-client dry-run data only. No real client, supplier, "

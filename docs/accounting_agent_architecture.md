@@ -4,15 +4,17 @@ Generated: 2026-05-16
 
 Target workspace: `/Users/yuriibakurov/Documents/Accounting Agent`
 
-Status: v0.2 local implementation plus architecture notes. The workspace now
-contains local fixture pipelines, policy/permit code, dry-run adapters, tests,
-and demos. No production integration, live Fortnox write, email send, payment,
-tax filing, or real client-data processing is allowed in this workspace.
+Status: v1 synthetic/local control-plane foundation plus architecture history.
+The workspace now contains typed accounting controls, entity-scoped local
+pipelines, evidence-bound approvals, resumable preparation agents, guarded read
+contracts, dry-run adapters, tests, and demos. No production integration, live
+Fortnox write, email send, payment, tax filing, or real client-data processing
+is allowed in this workspace.
 
 ## Current State
 
-The target workspace is no longer an empty seed folder. It now contains a
-local-first Swedish accounting-agent MVP-0 with synthetic fixtures, a supplier
+The target workspace is no longer an empty seed folder. It now contains the v1
+Sweden-first synthetic/local foundation with synthetic fixtures, a supplier
 invoice autopilot, policy and execution permits, a dry-run Fortnox boundary, a
 restricted Fortnox MCP facade, a Microsoft 365 local intake prototype, Hermes
 approval packets, Openclaw-style risk findings, a gnubok shadow-ledger stub, a
@@ -50,12 +52,12 @@ Current repo contents include:
 - `accounting_agent/adapters/gnubok.py`: local shadow-ledger validation stub.
 - `accounting_agent/bank_reconciliation/*`: fixture-only bank reconciliation proposal prototype.
 - `accounting_agent/local_demo.py`: one-command synthetic Supplier Invoice Autopilot demo.
-- `tests/`: local unit and smoke coverage for the current MVP-0 surfaces.
+- `tests/`: local unit and integration coverage for the current v1 surfaces.
 
 No production runtime integration exists in this repo:
 
 - no live Microsoft Graph adapter
-- no live Fortnox credentialed run is allowed for MVP-0
+- no live Fortnox credentialed run is allowed for the v1 preview
 - no email sender
 - no payment, tax filing, final voucher posting, supplier invoice approval, deletion, or settings-change implementation
 - no real client documents or tracked secrets should be present
@@ -181,7 +183,10 @@ Action modes:
 
 - `auto_allowed`: local, reversible, non-client-sensitive work such as indexing approved fixture files, recomputing hashes, running tests, or generating draft-only local proposals.
 - `draft_only`: proposal generation, Hermes message drafts, missing-info summaries, report drafts, and dry-run/no-live draft adapter payloads.
-- `approval_required`: creating live Fortnox drafts, sending client messages, using client documents, exporting SIE packages, changing proposal status to ready-for-booking.
+- `approval_required`: a future policy category for actions such as creating an
+  external draft or sending a client message. The current Fortnox adapter does
+  not implement or enable that live path; local proposals and dry-runs only are
+  in scope.
 - `escalation_required`: tax filing, broad Microsoft tenant access, permission changes, client onboarding beyond the approved pilot, and other high-risk actions that are not explicitly forbidden.
 - `forbidden`: storing secrets in repo, self-approval, hidden live writes, final voucher posting, invoice sending, supplier invoice approval, payments, destructive ledger changes, deleting audit logs, bypassing idempotency, using Obsidian as the operational queue.
 
@@ -263,8 +268,11 @@ Permissions:
 Approval gates:
 
 - no self-approval
-- every execution permit must point to an approval request
-- permits expire and are scoped to one adapter/action/client/document set
+- every reviewed execution permit must point to an exact immutable approval
+  request; zero-review draft permits carry no approval receipt
+- every permit carries a separate explicit entity id; client-to-entity fallback
+  is forbidden
+- permits expire and are scoped to one adapter/action/client/entity/document set
 - rejected or expired approvals leave tasks blocked with a reason
 
 Idempotency:
@@ -283,7 +291,7 @@ Audit:
 
 ## Historical Implementation Sequence
 
-This section is retained as planning history. The current MVP-0 implementation
+This section is retained as planning history from the initial MVP-0. The v1 implementation
 has already completed or superseded parts of these phases; use the "Current
 State" and feature-specific docs as the source of truth for what exists now.
 

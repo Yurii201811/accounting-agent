@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from accounting_agent.accounting.proposals import AccountingEntry, SupplierInvoiceProposal
+from accounting_agent.accounting.money import Money
 from accounting_agent.adapters.gnubok import (
     ShadowLedgerAdapter,
     mirror_supplier_invoice_proposal_to_shadow,
@@ -15,9 +16,9 @@ from accounting_agent.adapters.gnubok import (
 from accounting_agent.client_identity import (
     canonical_client_id,
     client_storage_key,
-    scoped_identity_hash,
 )
-from accounting_agent.db import LocalQueue
+from accounting_agent.db import LocalQueue, scoped_entity_identity_hash
+from accounting_agent.ledger import JournalDraft, JournalValidation, JournalValidationPolicy
 from accounting_agent.policy import (
     ActionType,
     PolicyContext,
@@ -34,6 +35,8 @@ from accounting_agent.risk_review import (
 
 from .extraction import as_decimal, extract_invoice_fields
 from .rules import (
+    SE_PREVIEW_SUPPLIER_ACCOUNTS,
+    SE_PREVIEW_SUPPLIER_CHART_ID,
     decide_policy,
     match_supplier,
     propose_accounting,
@@ -51,11 +54,13 @@ class SupplierInvoicePipeline:
         output_dir: str | Path | None = ".local/approval_packets",
         *,
         client_id: str = "fixture_client",
+        entity_id: str,
         shadow_ledger_adapter: ShadowLedgerAdapter | None = None,
         enable_shadow_ledger: bool = True,
         evaluation_date: date | None = None,
     ) -> None:
         self.client_id = canonical_client_id(client_id)
+        self.entity_id = canonical_client_id(entity_id)
         self.queue = LocalQueue(db_path) if db_path else None
         self.output_dir = Path(output_dir) if output_dir else None
         self.shadow_ledger_adapter = shadow_ledger_adapter
@@ -72,13 +77,22 @@ class SupplierInvoicePipeline:
         fixture = json.loads(path.read_text(encoding="utf-8"))
         file_hash = sha256_file(path)
         now = utc_now()
-        scoped_case_hash = scoped_identity_hash(self.client_id, file_hash)
+        scoped_case_hash = scoped_entity_identity_hash(
+            self.client_id,
+            self.entity_id,
+            file_hash,
+        )
         case_id = f"si_{scoped_case_hash[:12]}"
         extracted = extract_invoice_fields(fixture)
-        invoice_signature = build_invoice_signature(extracted, client_id=self.client_id)
+        invoice_signature = build_invoice_signature(
+            extracted,
+            client_id=self.client_id,
+            entity_id=self.entity_id,
+        )
         case = {
             "case_id": case_id,
             "client_id": self.client_id,
+            "entity_id": self.entity_id,
             "fixture_name": fixture.get("scenario", path.stem),
             "source_path": str(path),
             "file_hash": file_hash,
@@ -129,12 +143,42 @@ class SupplierInvoicePipeline:
             policy_decision,
             canonical_decision,
         )
+        canonical_proposal = build_shadow_supplier_invoice_proposal(
+            case=case,
+            client_id=self.client_id,
+            entity_id=self.entity_id,
+            extracted=extracted,
+            supplier_match=supplier_match,
+            vat_proposal=vat_proposal,
+            accounting_proposal=accounting_proposal,
+        )
+        journal_draft = canonical_proposal.to_journal_draft(
+            period_locked=bool(extracted.get("period_locked", False))
+        )
+        journal_validation = journal_draft.validate(
+            JournalValidationPolicy(
+                chart_id=SE_PREVIEW_SUPPLIER_CHART_ID,
+                allowed_accounts=SE_PREVIEW_SUPPLIER_ACCOUNTS,
+                require_line_evidence=True,
+            )
+        )
+        policy_decision = apply_journal_validation_to_policy(
+            policy_decision,
+            journal_validation,
+        )
         fortnox_payload = build_fortnox_payload(
-            case, extracted, supplier_match, accounting_proposal, policy_decision
+            case,
+            extracted,
+            supplier_match,
+            accounting_proposal,
+            policy_decision,
+            client_id=self.client_id,
+            entity_id=self.entity_id,
         )
         shadow_ledger_comparison = build_shadow_ledger_comparison(
             case=case,
             client_id=self.client_id,
+            entity_id=self.entity_id,
             extracted=extracted,
             supplier_match=supplier_match,
             vat_proposal=vat_proposal,
@@ -155,6 +199,8 @@ class SupplierInvoicePipeline:
             risk_findings=risk_findings,
             policy_decision=policy_decision,
             fortnox_payload=fortnox_payload,
+            journal_draft=journal_draft,
+            journal_validation=journal_validation,
             shadow_ledger_comparison=shadow_ledger_comparison,
         )
         packet["run_context"] = {
@@ -165,6 +211,7 @@ class SupplierInvoicePipeline:
                 "explicit" if self.evaluation_date else "system_clock"
             ),
             "client_id": self.client_id,
+            "entity_id": self.entity_id,
             "jurisdiction_pack": "se-2026",
         }
 
@@ -190,6 +237,7 @@ class SupplierInvoicePipeline:
                 invoice_signature,
                 case_id,
                 client_id=self.client_id,
+                entity_id=self.entity_id,
             )
         if duplicate is None:
             duplicate = self._seen_signatures.get(invoice_signature)
@@ -205,8 +253,8 @@ class SupplierInvoicePipeline:
                         "code": "possible_duplicate",
                         "severity": "high",
                         "message": (
-                            "A matching v0.1 queue row has no verified client owner. "
-                            "Map the legacy queue explicitly before continuing."
+                            "A matching legacy queue row has no verified legal-entity "
+                            "owner. Map both client and entity explicitly before continuing."
                         ),
                     }
                 ],
@@ -259,6 +307,8 @@ def build_approval_packet(
     risk_findings: tuple[RiskFinding, ...],
     policy_decision: dict[str, Any],
     fortnox_payload: dict[str, Any],
+    journal_draft: JournalDraft,
+    journal_validation: JournalValidation,
     shadow_ledger_comparison: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     document_summary = {
@@ -284,6 +334,12 @@ def build_approval_packet(
         "risk": risk,
         "risk_findings": findings_to_dicts(risk_findings),
         "policy_decision": policy_decision,
+        "journal_binding": {
+            "journal_id": journal_draft.journal_id,
+            "client_id": journal_draft.client_id,
+            "entity_id": journal_draft.entity_id,
+        },
+        "journal_validation": journal_validation_to_dict(journal_validation),
         "required_human_decision": policy_decision["required_human_decision"],
         "next_action": policy_decision["exact_proposed_external_action"],
         "fortnox_draft_payload": fortnox_payload,
@@ -312,6 +368,8 @@ def build_approval_packet(
                     "risk_level": risk["level"],
                     "risk_flags": [flag["code"] for flag in risk["flags"]],
                     "risk_findings": findings_to_dicts(risk_findings),
+                    "journal_valid": journal_validation.is_valid,
+                    "journal_error_codes": journal_validation.error_codes,
                     "shadow_ledger_status": (
                         shadow_ledger_comparison or {"status": "disabled"}
                     )["status"],
@@ -408,6 +466,55 @@ def apply_canonical_policy_decision(
     return decision
 
 
+def apply_journal_validation_to_policy(
+    policy_decision: dict[str, Any],
+    validation: JournalValidation,
+) -> dict[str, Any]:
+    """Block every downstream draft when canonical double-entry controls fail."""
+
+    decision = dict(policy_decision)
+    decision["journal_error_codes"] = validation.error_codes
+    if validation.is_valid:
+        return decision
+    decision["mode"] = "forbidden"
+    decision["decision"] = "blocked_by_journal_validation"
+    decision["required_reviews"] = ()
+    decision["required_human_decision"] = (
+        "Correct the journal and supporting evidence before any ERP-shaped draft is prepared."
+    )
+    decision["exact_proposed_external_action"] = {
+        "action": "none_until_journal_corrected",
+        "reason": "Canonical double-entry validation failed.",
+        "live_api_call": False,
+    }
+    return decision
+
+
+def journal_validation_to_dict(validation: JournalValidation) -> dict[str, Any]:
+    return {
+        "journal_id": validation.journal_id,
+        "is_valid": validation.is_valid,
+        "error_codes": validation.error_codes,
+        "issues": [
+            {
+                "code": issue.code,
+                "message": issue.message,
+                "line_index": issue.line_index,
+            }
+            for issue in validation.issues
+        ],
+        "currency": (
+            validation.debit_total.currency if validation.debit_total is not None else None
+        ),
+        "debit_total_minor": (
+            validation.debit_total.minor if validation.debit_total is not None else None
+        ),
+        "credit_total_minor": (
+            validation.credit_total.minor if validation.credit_total is not None else None
+        ),
+    }
+
+
 def build_openclaw_risk_findings(
     *,
     case: dict[str, Any],
@@ -419,12 +526,13 @@ def build_openclaw_risk_findings(
     vat_proposal: dict[str, Any],
     today: date | None = None,
 ) -> tuple[RiskFinding, ...]:
+    currency = str(extracted.get("currency") or "SEK")
     return review_accounting_case(
         AccountingCase(
             case_id=str(case["case_id"]),
             client_id=client_id,
-            amount_minor=minor_amount(extracted["amounts"].get("gross")),
-            currency=str(extracted.get("currency") or "SEK"),
+            amount_minor=minor_amount(extracted["amounts"].get("gross"), currency),
+            currency=currency,
             supplier_id=supplier_match.get("supplier_id"),
             supplier_name=extracted.get("supplier_name"),
             supplier_known=supplier_match.get("status") == "matched",
@@ -435,7 +543,7 @@ def build_openclaw_risk_findings(
             has_source_document=True,
             ocr_confidence=float(extracted.get("extraction_confidence", 1.0)),
             vat_confidence=1.0 if vat_proposal.get("status") == "normal" else 0.5,
-            vat_amount_minor=minor_amount(extracted["amounts"].get("vat")),
+            vat_amount_minor=minor_amount(extracted["amounts"].get("vat"), currency),
             accounting_period=extracted.get("accounting_period"),
             period_locked=bool(extracted.get("period_locked", False)),
             known_supplier_bank_account=supplier_match.get("known_bankgiro"),
@@ -462,10 +570,12 @@ def build_supplier_invoice_policy_context(
     vat_proposal: dict[str, Any],
     risk_findings: tuple[RiskFinding, ...],
 ) -> PolicyContext:
+    currency = str(extracted.get("currency") or "SEK")
     return PolicyContext(
         action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
         client_id=client_id,
-        amount_minor=minor_amount(extracted["amounts"].get("gross")),
+        currency_code=currency,
+        amount_minor=minor_amount(extracted["amounts"].get("gross"), currency),
         supplier_known=supplier_match.get("status") == "matched",
         bank_details_changed=supplier_match.get("bank_details_status") == "changed",
         duplicate_risk=(
@@ -493,7 +603,10 @@ def prior_invoices_from_duplicate_check(
             supplier_id=supplier_match.get("supplier_id"),
             supplier_name=extracted.get("supplier_name"),
             invoice_number=extracted.get("invoice_number"),
-            amount_minor=minor_amount(extracted["amounts"].get("gross")),
+            amount_minor=minor_amount(
+                extracted["amounts"].get("gross"),
+                str(extracted.get("currency") or "SEK"),
+            ),
             invoice_date=parse_date(extracted.get("invoice_date")),
         ),
     )
@@ -505,6 +618,9 @@ def build_fortnox_payload(
     supplier_match: dict[str, Any],
     accounting_proposal: dict[str, Any],
     policy_decision: dict[str, Any],
+    *,
+    client_id: str,
+    entity_id: str,
 ) -> dict[str, Any]:
     return {
         "target_adapter": "fortnox_supplier_invoice_draft",
@@ -512,6 +628,8 @@ def build_fortnox_payload(
         "live_api_call": False,
         "idempotency_key": f"fortnox-draft:{case['case_id']}",
         "policy_mode": policy_decision["mode"],
+        "client_id": canonical_client_id(client_id),
+        "entity_id": canonical_client_id(entity_id),
         "supplier_id": supplier_match.get("supplier_id"),
         "supplier_name": extracted.get("supplier_name"),
         "supplier_org_number": extracted.get("supplier_org_number"),
@@ -522,7 +640,10 @@ def build_fortnox_payload(
         "total": extracted["amounts"].get("gross"),
         "bankgiro_from_invoice": extracted.get("bankgiro"),
         "bankgiro_matches_known": supplier_match.get("bank_details_status") == "matched",
-        "accounting_rows": build_fortnox_accounting_rows(accounting_proposal["entries"]),
+        "accounting_rows": build_fortnox_accounting_rows(
+            accounting_proposal["entries"],
+            str(extracted.get("currency") or "SEK"),
+        ),
         "blocked_from_live_use": True,
         "blocked_reason": "MVP is dry-run only. A human approval and future guarded adapter are required before live Fortnox use.",
     }
@@ -530,12 +651,13 @@ def build_fortnox_payload(
 
 def build_fortnox_accounting_rows(
     accounting_entries: list[dict[str, Any]],
+    currency: str = "SEK",
 ) -> list[dict[str, Any]]:
     return [
         {
             "account": str(entry["account"]),
-            "debit_minor": minor_amount(entry.get("debit")),
-            "credit_minor": minor_amount(entry.get("credit")),
+            "debit_minor": minor_amount(entry.get("debit"), currency),
+            "credit_minor": minor_amount(entry.get("credit"), currency),
             "vat_code": entry.get("vat_code"),
             "description": str(entry.get("description") or ""),
         }
@@ -547,6 +669,7 @@ def build_shadow_ledger_comparison(
     *,
     case: dict[str, Any],
     client_id: str = "fixture_client",
+    entity_id: str,
     extracted: dict[str, Any],
     supplier_match: dict[str, Any],
     vat_proposal: dict[str, Any],
@@ -569,6 +692,7 @@ def build_shadow_ledger_comparison(
     proposal = build_shadow_supplier_invoice_proposal(
         case=case,
         client_id=client_id,
+        entity_id=entity_id,
         extracted=extracted,
         supplier_match=supplier_match,
         vat_proposal=vat_proposal,
@@ -585,36 +709,40 @@ def build_shadow_supplier_invoice_proposal(
     *,
     case: dict[str, Any],
     client_id: str = "fixture_client",
+    entity_id: str,
     extracted: dict[str, Any],
     supplier_match: dict[str, Any],
     vat_proposal: dict[str, Any],
     accounting_proposal: dict[str, Any],
 ) -> SupplierInvoiceProposal:
     amounts = extracted["amounts"]
+    currency = extracted.get("currency") or "SEK"
     return SupplierInvoiceProposal(
         proposal_id=f"proposal:{case['case_id']}",
         case_id=case["case_id"],
         client_id=client_id,
+        entity_id=entity_id,
         supplier_id=supplier_match.get("supplier_id") or "unknown_supplier",
         supplier_name=extracted.get("supplier_name") or "Unknown supplier",
         invoice_number=extracted.get("invoice_number") or case["case_id"],
         invoice_date=extracted.get("invoice_date") or utc_now()[:10],
         due_date=extracted.get("due_date") or extracted.get("invoice_date") or utc_now()[:10],
-        currency=extracted.get("currency") or "SEK",
-        net_amount_minor=minor_amount(amounts.get("net")),
-        vat_amount_minor=minor_amount(amounts.get("vat")),
-        gross_amount_minor=minor_amount(amounts.get("gross")),
+        currency=currency,
+        net_amount_minor=minor_amount(amounts.get("net"), currency),
+        vat_amount_minor=minor_amount(amounts.get("vat"), currency),
+        gross_amount_minor=minor_amount(amounts.get("gross"), currency),
         vat_rate_percent=int(as_decimal(extracted.get("vat_rate")) or Decimal("0")),
         expense_account=accounting_proposal["bas_account"],
         vat_account=vat_proposal.get("input_vat_account") or "2641",
         payable_account="2440",
         description=extracted.get("description") or "Supplier invoice",
         confidence=float(accounting_proposal.get("confidence", 0.0)),
+        source_document_hash=str(case.get("file_hash") or ""),
         entries=tuple(
             AccountingEntry(
                 account=str(entry["account"]),
-                debit_minor=minor_amount(entry.get("debit")),
-                credit_minor=minor_amount(entry.get("credit")),
+                debit_minor=minor_amount(entry.get("debit"), currency),
+                credit_minor=minor_amount(entry.get("credit"), currency),
                 description=str(entry.get("description") or ""),
                 vat_code=entry.get("vat_code"),
             )
@@ -623,11 +751,11 @@ def build_shadow_supplier_invoice_proposal(
     )
 
 
-def minor_amount(value: Any) -> int:
+def minor_amount(value: Any, currency: str = "SEK") -> int:
     decimal_value = as_decimal(value)
     if decimal_value is None:
         return 0
-    return int((decimal_value * Decimal("100")).quantize(Decimal("1")))
+    return Money.from_major(decimal_value, currency).minor
 
 
 def parse_date(value: Any) -> date | None:
@@ -643,10 +771,12 @@ def build_invoice_signature(
     extracted: dict[str, Any],
     *,
     client_id: str = "fixture_client",
+    entity_id: str,
 ) -> str:
     supplier_key = extracted.get("supplier_org_number") or extracted.get("supplier_name") or "unknown"
     parts = [
         client_storage_key(canonical_client_id(client_id)),
+        client_storage_key(canonical_client_id(entity_id)),
         str(supplier_key).casefold(),
         str(extracted.get("invoice_number") or "").casefold(),
         str(extracted.get("invoice_date") or ""),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import re
@@ -12,15 +13,22 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from accounting_agent.erp import (
-    COMPUTER_USE_BOUNDARY,
-    CapabilityMode,
-    ErpProvider,
-    list_erp_profiles,
+from accounting_agent.autonomy import AUTONOMY_LADDER
+from accounting_agent.close import CLOSE_STAGE_ORDER, CloseStage
+from accounting_agent.connector_contract import (
+    ProviderLifecycle,
+    list_connector_manifests,
+)
+from accounting_agent.erp import COMPUTER_USE_BOUNDARY
+from accounting_agent.model_runtime import (
+    NetworkScope,
+    ProviderId,
+    list_provider_manifests,
 )
 
 
 DEFAULT_OUTPUT_PATH = Path("reports/operations_cockpit/index.html")
+DEFAULT_PUBLIC_PREVIEW_DIR = Path(".local/accounting_agent_v1_public_preview")
 DEFAULT_FAKE_CLIENT_OUTPUT = Path(".local/fake_client_dry_run")
 DEFAULT_DEMO_OUTPUT = Path(".local/demo_supplier_invoice_autopilot")
 DEFAULT_DB_PATH = Path(".local/accounting_agent.sqlite")
@@ -125,7 +133,9 @@ class ArtifactLink:
     path: str
     kind: str
     exists: bool
+    label_sv: str = ""
     note: str = ""
+    note_sv: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +204,17 @@ class OperationsCockpitBuildResult:
     broken_links: tuple[str, ...] = ()
 
 
+_PUBLIC_PREVIEW_FILES = frozenset(
+    {
+        "index.html",
+        "tokens.css",
+        "favicon.svg",
+        "LICENSE.lucide.txt",
+        "preview-manifest.json",
+    }
+)
+
+
 def build_operations_cockpit(
     *,
     repo_root: str | Path = Path("."),
@@ -223,6 +244,195 @@ def build_operations_cockpit(
         data=data,
         link_targets_checked=len(_extract_hrefs(output.read_text(encoding="utf-8"))),
         broken_links=tuple(str(path) for path in broken_links),
+    )
+
+
+def build_public_preview(
+    *,
+    repo_root: str | Path = Path("."),
+    output_dir: str | Path = DEFAULT_PUBLIC_PREVIEW_DIR,
+) -> OperationsCockpitBuildResult:
+    """Build a self-contained preview from built-in synthetic examples only.
+
+    Unlike the local cockpit builder, this function never reads ``.local``
+    workflow artifacts. The resulting directory is therefore safe to inspect
+    or deploy without exposing local case identifiers, source paths, course
+    material, or evidence files.
+    """
+
+    root = Path(repo_root).resolve()
+    bundle = _resolve_under_root(root, output_dir)
+    if bundle.exists() and not bundle.is_dir():
+        raise FileExistsError(f"Public preview path is not a directory: {bundle}")
+    if bundle.is_dir():
+        unexpected = sorted(
+            path.relative_to(bundle).as_posix()
+            for path in bundle.rglob("*")
+            if path.is_symlink()
+            or path.is_dir()
+            or path.relative_to(bundle).as_posix() not in _PUBLIC_PREVIEW_FILES
+        )
+        if unexpected:
+            raise ValueError(
+                "Refusing to reuse a public preview directory containing unexpected files: "
+                + ", ".join(unexpected)
+            )
+    bundle.mkdir(parents=True, exist_ok=True)
+
+    static = resources.files("accounting_agent").joinpath("static")
+    for name in ("tokens.css", "favicon.svg", "LICENSE.lucide.txt"):
+        source = static.joinpath(name)
+        if not source.is_file():
+            raise FileNotFoundError(f"Required packaged preview asset not found: {name}")
+        (bundle / name).write_bytes(source.read_bytes())
+
+    output = bundle / "index.html"
+    data = _synthetic_public_preview_data(bundle=bundle, output=output)
+    markup = render_operations_cockpit(data)
+    forbidden_markers = (
+        "/Users/",
+        "Downloads/",
+        ".local/",
+        "kursstart",
+        "e427o-bokforing2",
+        "e428o-bokforing3",
+    )
+    leaked = [marker for marker in forbidden_markers if marker.casefold() in markup.casefold()]
+    if leaked:
+        raise ValueError("Public preview contains a forbidden local marker: " + ", ".join(leaked))
+    output.write_text(markup, encoding="utf-8")
+
+    manifest_files = {}
+    for name in ("index.html", "tokens.css", "favicon.svg", "LICENSE.lucide.txt"):
+        payload = (bundle / name).read_bytes()
+        manifest_files[name] = {
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    manifest = {
+        "bundle_type": "accounting_agent_v1_synthetic_preview",
+        "generated_at": data.generated_at,
+        "release": "1.0.0",
+        "synthetic_data_only": True,
+        "source_artifact_links": 0,
+        "build_contract": {
+            "reads_local_workflow_artifacts": False,
+            "network_invocation_available": False,
+            "hosted_model_invocation_available": False,
+            "erp_write_invocation_available": False,
+        },
+        "files": manifest_files,
+    }
+    (bundle / "preview-manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    broken_links = verify_generated_links(output, bundle)
+    return OperationsCockpitBuildResult(
+        output_path=output,
+        data=data,
+        link_targets_checked=len(_extract_hrefs(markup)),
+        broken_links=tuple(str(path) for path in broken_links),
+    )
+
+
+def _synthetic_public_preview_data(*, bundle: Path, output: Path) -> OperationsCockpitData:
+    generated_at = _utc_now()
+    review_items = {
+        "approval_required": [
+            ReviewItem(
+                "SYN-BANK-011",
+                "bank reconciliation",
+                "approval_required",
+                "The proposed match needs an accountable reviewer.",
+            )
+        ],
+        "escalation_required": [
+            ReviewItem(
+                "SYN-VAT-007",
+                "supplier invoice",
+                "escalation_required",
+                "The VAT treatment is intentionally uncertain in this synthetic example.",
+            )
+        ],
+        "forbidden": [
+            ReviewItem(
+                "SYN-INV-003",
+                "supplier invoice",
+                "forbidden",
+                "A possible duplicate and changed bank details block the proposal.",
+            )
+        ],
+        "missing_info": [
+            ReviewItem(
+                "SYN-BANK-011",
+                "bank reconciliation",
+                "approval_required",
+                "Better match evidence is required.",
+            )
+        ],
+        "duplicate_risk": [
+            ReviewItem(
+                "SYN-INV-003",
+                "supplier invoice",
+                "forbidden",
+                "Possible duplicate invoice.",
+            )
+        ],
+        "changed_bank_details": [
+            ReviewItem(
+                "SYN-INV-003",
+                "supplier invoice",
+                "forbidden",
+                "Supplier bank details changed.",
+            )
+        ],
+        "uncertain_vat": [
+            ReviewItem(
+                "SYN-VAT-007",
+                "supplier invoice",
+                "escalation_required",
+                "VAT classification requires a qualified human decision.",
+            )
+        ],
+    }
+    workflow_status = {
+        "policy_gate": "review_required",
+        "approval_packet": "review_required",
+        "execution_permit": "missing",
+        "fortnox_dry_run": "dry_run_only",
+    }
+    workflow = tuple(
+        WorkflowStep(
+            key=key,
+            label=label,
+            status=workflow_status.get(key, "available"),
+            detail=(
+                "3 synthetic cases prepared for review."
+                if key in {"policy_gate", "approval_packet"}
+                else "Synthetic preview evidence available."
+            ),
+        )
+        for key, label in WORKFLOW_STEPS
+    )
+    return OperationsCockpitData(
+        generated_at=generated_at,
+        repo_root=str(bundle),
+        output_path=str(output),
+        last_run=generated_at,
+        local_readiness="local_fake_client_dry_run_complete",
+        demo_readiness="supplier_invoice_demo_complete",
+        live_counters={
+            "live_fortnox_calls": 0,
+            "live_microsoft365_calls": 0,
+            "emails_payments_filings": 0,
+        },
+        queue_counts={},
+        workflow=workflow,
+        review_queues=_build_review_queues(review_items),
+        artifacts=(),
+        warnings=("This public preview contains generated synthetic examples only.",),
     )
 
 
@@ -303,8 +513,8 @@ def render_operations_cockpit(data: OperationsCockpitData) -> str:
             "<head>",
             '<meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
-            "<title>Accounting Agent Operations Cockpit</title>",
-            '<meta name="description" content="A read-only local workbench for accounting review, evidence, and guarded automation.">',
+            "<title>Accounting Agent v1 · Operations</title>",
+            '<meta name="description" data-content-en="A Sweden-first, provider-neutral workspace for accounting review, close control, evidence, and guarded automation." data-content-sv="En leverantörsneutral, Sverigefokuserad arbetsyta för redovisningsgranskning, bokslutskontroll, underlag och bevakad automatisering." content="A Sweden-first, provider-neutral workspace for accounting review, close control, evidence, and guarded automation.">',
             f'<link rel="icon" type="image/svg+xml" href="{icon_href}">',
             f'<link rel="stylesheet" href="{tokens_href}">',
             "<style>",
@@ -312,19 +522,22 @@ def render_operations_cockpit(data: OperationsCockpitData) -> str:
             "</style>",
             "</head>",
             '<body data-view="guided" data-role="small-firm">',
-            '<a class="skip-link" href="#main-content">Skip to main content</a>',
+            '<a class="skip-link" href="#main-content" data-i18n data-en="Skip to main content" data-sv="Hoppa till huvudinnehållet">Skip to main content</a>',
             _render_environment_strip(),
             _render_header(data),
-            _render_section_nav(),
+            _render_section_nav(data),
             '<main id="main-content" class="shell">',
             _render_status_grid(data),
             _render_review_queues(data, root, output),
-            _render_workflow(data, root, output),
+            _render_setup(data),
+            _render_close_center(),
+            _render_automation_center(),
             _render_integrations(),
+            _render_workflow(data, root, output),
             _render_controls(data, root, output),
             "</main>",
             _render_footer(data),
-            _render_command_dialog(),
+            _render_command_dialog(data),
             "<script>",
             _SCRIPT,
             "</script>",
@@ -355,11 +568,10 @@ def _render_environment_strip() -> str:
     return """
 <aside class="environment-strip" aria-label="Environment and safety context" data-aria-label-en="Environment and safety context" data-aria-label-sv="Miljö- och säkerhetskontext">
   <div class="shell environment-inner">
-    <strong data-i18n data-en="Local synthetic dry-run" data-sv="Lokal syntetisk torrkörning">Local synthetic dry-run</strong>
-    <span data-i18n data-en="Sweden" data-sv="Sverige">Sweden</span>
-    <span>SEK</span>
-    <span>BAS 2026</span>
-    <span data-i18n data-en="Provider-neutral ERP profile" data-sv="Leverantörsneutral ERP-profil">Provider-neutral ERP profile</span>
+    <strong data-i18n data-en="v1 synthetic preview" data-sv="v1 syntetisk förhandsvisning">v1 synthetic preview</strong>
+    <span data-i18n data-en="Sweden-first" data-sv="Sverige först">Sweden-first</span>
+    <span data-i18n data-en="International foundation" data-sv="Internationell grund">International foundation</span>
+    <span data-i18n data-en="Provider-neutral" data-sv="Leverantörsneutral">Provider-neutral</span>
     <span class="boundary-state" data-i18n data-en="Live writes blocked" data-sv="Skrivning i live-system blockerad">Live writes blocked</span>
   </div>
 </aside>""".strip()
@@ -368,18 +580,23 @@ def _render_environment_strip() -> str:
 def _render_header(data: OperationsCockpitData) -> str:
     return f"""
 <header class="app-header shell">
-  <div class="header-copy">
-    <h1>Accounting Agent Operations Cockpit</h1>
-    <p data-i18n data-en="Review what needs judgment, understand why it stopped, and trace every proposal back to local evidence." data-sv="Granska det som kräver bedömning, förstå varför arbetet stoppades och spåra varje förslag till lokalt underlag.">Review what needs judgment, understand why it stopped, and trace every proposal back to local evidence.</p>
-  </div>
-  <div class="header-tools" aria-label="Workspace preferences" data-aria-label-en="Workspace preferences" data-aria-label-sv="Inställningar för arbetsytan">
+  <div class="nav-edge">
+    <a class="wordmark" href="#today" aria-label="Accounting Agent v1 home" data-aria-label-en="Accounting Agent v1 home" data-aria-label-sv="Accounting Agent v1 startsida">Accounting Agent <span>v1</span></a>
     <button class="command-trigger" id="command-trigger" type="button" aria-haspopup="dialog" aria-controls="command-dialog">
-      <span data-i18n data-en="Find a section" data-sv="Hitta en sektion">Find a section</span>
+      <span data-i18n data-en="Find work" data-sv="Hitta arbete">Find work</span>
       <kbd id="command-shortcut">⌘ K</kbd>
     </button>
+  </div>
+  <div class="header-copy">
+    <h1 data-i18n data-en="Move the close forward." data-sv="För bokslutet framåt.">Move the close forward.</h1>
+    <p data-i18n data-en="Clear exceptions, finish reconciliations, and supervise automation from one evidence-first workspace. The agent prepares; accountable people decide." data-sv="Hantera undantag, slutför avstämningar och övervaka automatisering i en underlagsstyrd arbetsyta. Agenten förbereder; ansvariga personer beslutar.">Clear exceptions, finish reconciliations, and supervise automation from one evidence-first workspace. The agent prepares; accountable people decide.</p>
+  </div>
+  <details class="workspace-preferences">
+    <summary data-i18n data-en="View settings" data-sv="Visningsinställningar">View settings</summary>
+    <div class="header-tools" aria-label="Workspace preferences" data-aria-label-en="Workspace preferences" data-aria-label-sv="Inställningar för arbetsytan">
     <label class="field-control">
       <span data-i18n data-en="Guidance perspective" data-sv="Vägledningsperspektiv">Guidance perspective</span>
-      <select id="role-select" name="role">
+      <select id="role-select" name="role" aria-describedby="role-guidance role-boundary">
         <option value="small-firm" data-i18n data-en="Small-firm accountant" data-sv="Redovisningskonsult, mindre byrå">Small-firm accountant</option>
         <option value="accountant" data-i18n data-en="Accountant" data-sv="Redovisningsekonom">Accountant</option>
         <option value="senior" data-i18n data-en="Senior accountant" data-sv="Senior redovisningsekonom">Senior accountant</option>
@@ -400,21 +617,30 @@ def _render_header(data: OperationsCockpitData) -> str:
       <label><input type="radio" name="view" value="guided" checked><span data-i18n data-en="Guided" data-sv="Guidad">Guided</span></label>
       <label><input type="radio" name="view" value="expert"><span data-i18n data-en="Expert" data-sv="Expert">Expert</span></label>
     </fieldset>
-  </div>
-  <p class="role-guidance" id="role-guidance">Queue-first guidance with plain-language evidence and explicit human decisions.</p>
-  <p class="role-boundary" data-i18n data-en="Perspective changes guidance only; safety policy and risk priority stay fixed." data-sv="Perspektivet ändrar bara vägledningen; säkerhetspolicy och riskprioritet ligger fast.">Perspective changes guidance only; safety policy and risk priority stay fixed.</p>
+    </div>
+    <p class="role-guidance" id="role-guidance" aria-live="polite" aria-atomic="true">Queue-first guidance with plain-language evidence and explicit human decisions.</p>
+    <p class="role-boundary" id="role-boundary" data-i18n data-en="Perspective changes guidance only; safety policy and risk priority stay fixed." data-sv="Perspektivet ändrar bara vägledningen; säkerhetspolicy och riskprioritet ligger fast.">Perspective changes guidance only; safety policy and risk priority stay fixed.</p>
+  </details>
   <p class="generation-stamp"><span data-i18n data-en="Snapshot generated" data-sv="Ögonblicksbild skapad">Snapshot generated</span> <time datetime="{_e(data.generated_at)}">{_e(_display_time(data.generated_at))}</time></p>
 </header>""".strip()
 
 
-def _render_section_nav() -> str:
-    return """
+def _render_section_nav(data: OperationsCockpitData) -> str:
+    start_class = (
+        ' class="expert-only"'
+        if data.local_readiness == "local_fake_client_dry_run_complete"
+        else ""
+    )
+    return f"""
 <nav class="section-nav" aria-label="Cockpit sections" data-aria-label-en="Cockpit sections" data-aria-label-sv="Cockpitens sektioner">
   <div class="shell section-nav-inner">
     <a href="#today" data-i18n data-en="Today" data-sv="Idag">Today</a>
+    <a href="#setup"{start_class} data-i18n data-en="Start" data-sv="Start">Start</a>
     <a href="#review" data-i18n data-en="Review" data-sv="Granskning">Review</a>
-    <a href="#workflow" data-i18n data-en="Workflow" data-sv="Arbetsflöde">Workflow</a>
-    <a href="#integrations" data-i18n data-en="Integrations" data-sv="Integrationer">Integrations</a>
+    <a href="#close" data-i18n data-en="Close" data-sv="Bokslut">Close</a>
+    <a href="#automation" data-i18n data-en="Automation" data-sv="Automatisering">Automation</a>
+    <a href="#integrations" data-i18n data-en="Connections" data-sv="Anslutningar">Connections</a>
+    <a href="#workflow" data-i18n data-en="How it works" data-sv="Så fungerar det">How it works</a>
     <a href="#controls" data-i18n data-en="Controls &amp; evidence" data-sv="Kontroller och underlag">Controls &amp; evidence</a>
   </div>
 </nav>""".strip()
@@ -450,13 +676,13 @@ def _render_status_grid(data: OperationsCockpitData) -> str:
         for label, label_sv, value, value_sv, tone, note, note_sv in cards
     )
     queue = "".join(
-        f"<div><dt>{_e(key.replace('_', ' '))}</dt><dd>{count}</dd></div>"
+        f'<div><dt {_i18n_attrs(key.replace("_", " ").title(), _QUEUE_KEY_SV.get(key, key.replace("_", " ").title()))}>{_e(key.replace("_", " ").title())}</dt><dd>{count}</dd></div>'
         for key, count in sorted(data.queue_counts.items())
     )
     queue_block = (
         f'<dl class="ledger-counts">{queue}</dl>'
         if queue
-        else '<p class="empty-state">No local SQLite queue counts found yet.</p>'
+        else f'<p class="empty-state" {_i18n_attrs("No local SQLite queue counts found yet.", "Inga lokala SQLite-köantal har hittats ännu.")}>No local SQLite queue counts found yet.</p>'
     )
     return f"""
 <section class="workbench-section" id="today" aria-labelledby="today-title">
@@ -476,6 +702,174 @@ def _render_status_grid(data: OperationsCockpitData) -> str:
     <summary data-i18n data-en="Local evidence table counts" data-sv="Lokala tabellräknare för underlag">Local evidence table counts</summary>
     {queue_block}
   </details>
+</section>""".strip()
+
+
+def _render_setup(data: OperationsCockpitData) -> str:
+    steps = (
+        (
+            "Company and period",
+            "Företag och period",
+            "Confirm legal entity, fiscal calendar, accounting method, functional currency, and chart mapping.",
+            "Bekräfta juridisk person, räkenskapsår, redovisningsmetod, funktionell valuta och kontomappning.",
+            "Required per entity",
+            "Krävs per enhet",
+        ),
+        (
+            "Evidence sources",
+            "Underlagskällor",
+            "Choose local upload, approved read-only connector, or supervised evidence capture. Hash before extraction.",
+            "Välj lokal uppladdning, godkänd skrivskyddad anslutning eller övervakad underlagsinsamling. Hasha före extraktion.",
+            "Client-scoped",
+            "Klientavgränsad",
+        ),
+        (
+            "Controls and reviewers",
+            "Kontroller och granskare",
+            "Set policy pack, materiality, close calendar, preparer, reviewer, controller, and auditor roles.",
+            "Ange policypaket, väsentlighet, bokslutskalender samt roller för beredare, granskare, controller och revisor.",
+            "Segregation required",
+            "Åtskillnad krävs",
+        ),
+        (
+            "Synthetic proof run",
+            "Syntetisk provkörning",
+            "Exercise money, journal, evidence, approval, autonomy, close, connector, and model-routing guards before any rollout.",
+            "Testa belopp, verifikation, underlag, godkännande, autonomi, bokslut, anslutningar och modellstyrning före utrullning.",
+            "Zero external calls",
+            "Noll externa anrop",
+        ),
+    )
+    rows = "".join(
+        f"""
+    <li class="narrative-step">
+      <span class="step-number" aria-hidden="true">{index}.0</span>
+      <div><h3 {_i18n_attrs(title, title_sv)}>{_e(title)}</h3><p {_i18n_attrs(detail, detail_sv)}>{_e(detail)}</p></div>
+      <strong {_i18n_attrs(state, state_sv)}>{_e(state)}</strong>
+    </li>"""
+        for index, (title, title_sv, detail, detail_sv, state, state_sv) in enumerate(
+            steps, start=1
+        )
+    )
+    setup_class = (
+        "workbench-section setup-complete expert-only"
+        if data.local_readiness == "local_fake_client_dry_run_complete"
+        else "workbench-section"
+    )
+    return f"""
+<section class="{setup_class}" id="setup" aria-labelledby="setup-title">
+  <div class="section-heading">
+    <div><h2 id="setup-title" data-i18n data-en="Start with a controlled scope" data-sv="Börja med en kontrollerad omfattning">Start with a controlled scope</h2>
+    <p data-i18n data-en="A guided path for new users; experts can open technical identifiers and raw control evidence without changing the underlying truth." data-sv="En guidad väg för nya användare; experter kan öppna tekniska identifierare och rå kontrollbevisning utan att ändra den underliggande sanningen.">A guided path for new users; experts can open technical identifiers and raw control evidence without changing the underlying truth.</p></div>
+  </div>
+  <ol class="narrative-sequence">{rows}</ol>
+  <p class="section-action"><a href="#integrations" data-i18n data-en="Review connection boundaries →" data-sv="Granska anslutningsgränser →">Review connection boundaries →</a></p>
+</section>""".strip()
+
+
+def _render_close_center() -> str:
+    stage_copy = {
+        CloseStage.EVIDENCE_COMPLETENESS: ("Evidence completeness", "Underlagens fullständighet"),
+        CloseStage.BANK_RECONCILIATION: ("Bank reconciliation", "Bankavstämning"),
+        CloseStage.SUBLEDGERS: ("Subledgers", "Reskontror"),
+        CloseStage.ADJUSTMENTS: ("Adjustments", "Bokslutsjusteringar"),
+        CloseStage.BALANCED_TRIAL_BALANCE: ("Balanced trial balance", "Balanserad saldobalans"),
+        CloseStage.VAT_CONTROL: ("VAT control", "Momskontroll"),
+        CloseStage.PREPARER_REVIEW: ("Preparer review", "Beredargranskning"),
+        CloseStage.INDEPENDENT_SIGNOFF: ("Independent signoff", "Oberoende signering"),
+        CloseStage.LOCK_READINESS: ("Lock readiness", "Redo för periodlås"),
+    }
+    rows = []
+    for index, stage in enumerate(CLOSE_STAGE_ORDER, start=1):
+        title, title_sv = stage_copy[stage]
+        human = stage in {
+            CloseStage.PREPARER_REVIEW,
+            CloseStage.INDEPENDENT_SIGNOFF,
+            CloseStage.LOCK_READINESS,
+        }
+        state = "Named human required" if human else "Deterministic control"
+        state_sv = "Namngiven person krävs" if human else "Deterministisk kontroll"
+        rows.append(
+            f"""
+    <li class="control-stage">
+      <span class="step-number" aria-hidden="true">{index:02d}</span>
+      <div><h3 {_i18n_attrs(title, title_sv)}>{_e(title)}</h3><p data-i18n data-en="Requires exact entity, period, policy, and evidence hashes." data-sv="Kräver exakta hashvärden för enhet, period, policy och underlag.">Requires exact entity, period, policy, and evidence hashes.</p></div>
+      <strong {_i18n_attrs(state, state_sv)}>{_e(state)}</strong>
+    </li>"""
+        )
+    return f"""
+<section class="workbench-section" id="close" aria-labelledby="close-title">
+  <div class="section-heading"><div>
+    <h2 id="close-title" data-i18n data-en="Close control centre" data-sv="Kontrollcenter för bokslut">Close control centre</h2>
+    <p data-i18n data-en="Dependencies run in order. Missing, duplicate, failed, or unknown facts stop downstream work; readiness never performs the lock." data-sv="Beroenden körs i ordning. Saknade, dubbla, felaktiga eller okända fakta stoppar efterföljande arbete; statusen redo utför aldrig periodlåset.">Dependencies run in order. Missing, duplicate, failed, or unknown facts stop downstream work; readiness never performs the lock.</p>
+  </div><p class="result-count" data-i18n data-en="Control design · no client period loaded" data-sv="Kontrolldesign · ingen klientperiod inläst">Control design · no client period loaded</p></div>
+  <div class="guided-only guided-summary"><strong data-i18n data-en="Three things decide readiness" data-sv="Tre saker avgör om bokslutet är redo">Three things decide readiness</strong><p data-i18n data-en="Complete evidence and reconciliations first, resolve every exception, then obtain independent human signoff. Open Expert view for all nine controls." data-sv="Slutför först underlag och avstämningar, lös alla undantag och inhämta därefter en oberoende mänsklig signering. Öppna Expertläget för samtliga nio kontroller.">Complete evidence and reconciliations first, resolve every exception, then obtain independent human signoff. Open Expert view for all nine controls.</p></div>
+  <ol class="control-sequence expert-only">{''.join(rows)}</ol>
+  <div class="boundary-notice" data-tone="neutral"><strong data-i18n data-en="Ready means ready for a decision." data-sv="Redo betyder redo för beslut.">Ready means ready for a decision.</strong><span data-i18n data-en="Period lock, reopen, posting, and filing remain outside this preview and require accountable authority." data-sv="Periodlås, återöppning, bokföring och inlämning ligger utanför denna förhandsvisning och kräver ansvarig behörighet.">Period lock, reopen, posting, and filing remain outside this preview and require accountable authority.</span></div>
+</section>""".strip()
+
+
+def _render_automation_center() -> str:
+    stage_sv = {
+        "collect": "Samla in",
+        "extract": "Extrahera",
+        "validate": "Validera",
+        "match": "Matcha",
+        "request_missing_evidence": "Begär saknat underlag",
+        "draft": "Förbered utkast",
+        "explain": "Förklara",
+        "assemble_review_packet": "Sammanställ granskningspaket",
+    }
+    stages = "".join(
+        f"""
+    <li class="automation-stage"><span class="step-number" aria-hidden="true">{index}.0</span><div><h3 {_i18n_attrs(stage.value.replace('_', ' ').capitalize(), stage_sv[stage.value])}>{_e(stage.value.replace('_', ' ').capitalize())}</h3><p data-i18n data-en="Checkpointed, resumable, client-scoped, and independently reviewable." data-sv="Kontrollpunktssparad, återupptagbar, klientavgränsad och oberoende granskningsbar.">Checkpointed, resumable, client-scoped, and independently reviewable.</p></div></li>"""
+        for index, stage in enumerate(AUTONOMY_LADDER, start=1)
+    )
+    provider_rows = []
+    for manifest in list_provider_manifests():
+        label_sv = {
+            ProviderId.DETERMINISTIC: "Deterministiska redovisningskontroller",
+            ProviderId.OLLAMA: "Ollama på den här enheten",
+            ProviderId.LOCAL_OPENAI_COMPATIBLE: "Lokal OpenAI-kompatibel anslutning",
+            ProviderId.OPENAI: "OpenAI API",
+            ProviderId.ANTHROPIC: "Anthropic API",
+            ProviderId.GEMINI: "Google Gemini API",
+            ProviderId.CODEX_WORKSPACE: "Codex-arbetsyteagent",
+        }[manifest.provider_id]
+        network, network_sv = {
+            NetworkScope.NONE: ("none", "inget"),
+            NetworkScope.LOCALHOST_ONLY: ("localhost only", "endast lokal värd"),
+            NetworkScope.HOSTED_OR_MANAGED: (
+                "hosted or managed",
+                "molnbaserat eller hanterat",
+            ),
+        }[manifest.network_scope]
+        if manifest.provider_id is ProviderId.DETERMINISTIC:
+            availability = "Built in"
+            availability_sv = "Inbyggd"
+        elif manifest.provider_id is ProviderId.OLLAMA:
+            availability = "Explicit local opt-in"
+            availability_sv = "Uttryckligt lokalt medgivande"
+        elif manifest.network_scope is NetworkScope.LOCALHOST_ONLY:
+            availability = "Local adapter required"
+            availability_sv = "Lokal adapter krävs"
+        else:
+            availability = "Off by default · manifest only"
+            availability_sv = "Av som standard · endast manifest"
+        provider_rows.append(
+            f"""
+      <tr><th scope="row" {_i18n_attrs(manifest.label, label_sv)}>{_e(manifest.label)}</th><td data-label="Network" data-label-en="Network" data-label-sv="Nätverk" {_i18n_attrs(network, network_sv)}>{_e(network)}</td><td data-label="Default" data-label-en="Default" data-label-sv="Standard" {_i18n_attrs(availability, availability_sv)}>{_e(availability)}</td><td data-label="Authority" data-label-en="Authority" data-label-sv="Behörighet" data-i18n data-en="Advice only · deterministic validation required" data-sv="Endast rådgivning · deterministisk validering krävs">Advice only · deterministic validation required</td></tr>"""
+        )
+    return f"""
+<section class="workbench-section" id="automation" aria-labelledby="automation-title">
+  <div class="section-heading"><div><h2 id="automation-title" data-i18n data-en="Automation and model routing" data-sv="Automatisering och modellstyrning">Automation and model routing</h2><p data-i18n data-en="Automate preparation to the maximum safe boundary. Models may extract, classify, match, draft, and explain; deterministic controls decide whether work may reach human review." data-sv="Automatisera förberedelser till den högsta säkra gränsen. Modeller får extrahera, klassificera, matcha, förbereda och förklara; deterministiska kontroller avgör om arbetet får nå mänsklig granskning.">Automate preparation to the maximum safe boundary. Models may extract, classify, match, draft, and explain; deterministic controls decide whether work may reach human review.</p></div></div>
+  <div class="guided-only guided-summary"><strong data-i18n data-en="The agent prepares; you decide" data-sv="Agenten förbereder; du beslutar">The agent prepares; you decide</strong><p data-i18n data-en="It gathers and checks evidence, drafts an explanation, and stops at review. Missing evidence, uncertainty, cancellation, or a control failure halts the run." data-sv="Den samlar in och kontrollerar underlag, förbereder en förklaring och stannar vid granskning. Saknade underlag, osäkerhet, avbrytning eller kontrollfel stoppar körningen.">It gathers and checks evidence, drafts an explanation, and stops at review. Missing evidence, uncertainty, cancellation, or a control failure halts the run.</p></div>
+  <div class="expert-only">
+    <ol class="automation-sequence">{stages}</ol>
+    <div class="subsection-heading"><h3 data-i18n data-en="Model provider contract" data-sv="Kontrakt för modellleverantörer">Model provider contract</h3><p data-i18n data-en="Local models are preferred for private accounting and course material. Hosted providers and Codex require explicit configuration; credentials are never model input." data-sv="Lokala modeller föredras för privat redovisnings- och kursmaterial. Molnleverantörer och Codex kräver uttrycklig konfiguration; inloggningsuppgifter används aldrig som modellindata.">Local models are preferred for private accounting and course material. Hosted providers and Codex require explicit configuration; credentials are never model input.</p></div>
+    <div class="table-frame"><table class="integration-table model-table"><caption data-i18n data-en="Provider-neutral advisory model matrix" data-sv="Leverantörsneutral matris för rådgivande modeller">Provider-neutral advisory model matrix</caption><thead><tr><th scope="col" data-i18n data-en="Provider" data-sv="Leverantör">Provider</th><th scope="col" data-i18n data-en="Network" data-sv="Nätverk">Network</th><th scope="col" data-i18n data-en="Default" data-sv="Standard">Default</th><th scope="col" data-i18n data-en="Authority" data-sv="Behörighet">Authority</th></tr></thead><tbody>{''.join(provider_rows)}</tbody></table></div>
+  </div>
+  <div class="boundary-notice" data-tone="warning"><strong data-i18n data-en="The terminal state is human review." data-sv="Slutläget är mänsklig granskning.">The terminal state is human review.</strong><span data-i18n data-en="The runner can resume after interruption and propagate cancellation, but it cannot approve, post, pay, file, send, delete, or change settings." data-sv="Körningen kan återupptas efter avbrott och sprida avbrytning, men den kan inte godkänna, bokföra, betala, lämna in, skicka, radera eller ändra inställningar.">The runner can resume after interruption and propagate cancellation, but it cannot approve, post, pay, file, send, delete, or change settings.</span></div>
 </section>""".strip()
 
 
@@ -550,12 +944,13 @@ def _render_workflow(
       <p data-i18n data-en="A deterministic accounting path first; bounded specialist agents add analysis without changing the permission ceiling." data-sv="Först ett deterministiskt redovisningsflöde; avgränsade specialistagenter tillför analys utan att höja behörighetstaket.">A deterministic accounting path first; bounded specialist agents add analysis without changing the permission ceiling.</p>
     </div>
   </div>
-  <ol class="workflow-sequence">{''.join(steps)}</ol>
-  <div class="subsection-heading">
+  <div class="guided-only guided-summary"><strong data-i18n data-en="Evidence → checks → human review" data-sv="Underlag → kontroller → mänsklig granskning">Evidence → checks → human review</strong><p data-i18n data-en="Deterministic controls run before specialist analysis. Any specialist can stop work, but none can approve its own result." data-sv="Deterministiska kontroller körs före specialistanalys. Varje specialist får stoppa arbetet, men ingen får godkänna sitt eget resultat.">Deterministic controls run before specialist analysis. Any specialist can stop work, but none can approve its own result.</p></div>
+  <ol class="workflow-sequence expert-only">{''.join(steps)}</ol>
+  <div class="subsection-heading expert-only">
     <h3 data-i18n data-en="Bounded specialist-agent pipeline" data-sv="Avgränsad pipeline med specialistagenter">Bounded specialist-agent pipeline</h3>
     <p data-i18n data-en="Parallel where evidence can be inspected independently, sequential where judgment depends on verified results." data-sv="Parallellt när underlag kan granskas oberoende, sekventiellt när bedömningen beror på verifierade resultat.">Parallel where evidence can be inspected independently, sequential where judgment depends on verified results.</p>
   </div>
-  <ol class="agent-pipeline">{agents}</ol>
+  <ol class="agent-pipeline expert-only">{agents}</ol>
   <div class="boundary-notice" data-tone="neutral">
     <strong data-i18n data-en="Coordinator rule" data-sv="Koordinatorregel">Coordinator rule</strong>
     <span data-i18n data-en="Every specialist inherits the same client, jurisdiction, evidence, capability, timeout, and stop boundaries. A monitor may stop work, but no agent may approve its own output." data-sv="Varje specialist ärver samma klient, jurisdiktion, underlag, behörighet, tidsgräns och stoppvillkor. En monitor får stoppa arbetet, men ingen agent får godkänna sitt eget resultat.">Every specialist inherits the same client, jurisdiction, evidence, capability, timeout, and stop boundaries. A monitor may stop work, but no agent may approve its own output.</span>
@@ -576,7 +971,19 @@ def _render_review_queues(
         guided_reason = _guided_review_reason(item)
         title_sv = _review_title_sv(item.title)
         guided_reason_sv = _guided_review_reason(item, swedish=True)
-        evidence = _optional_link(item.artifact_path, root, output, "Open evidence", "Öppna underlag")
+        raw_evidence = _optional_link(
+            item.artifact_path,
+            root,
+            output,
+            "Open technical evidence",
+            "Öppna tekniskt underlag",
+        )
+        evidence = (
+            '<span class="guided-only" data-i18n data-en="Evidence ready · open in Expert view" data-sv="Underlag klart · öppna i Expertläget">Evidence ready · open in Expert view</span>'
+            f'<span class="expert-only">{raw_evidence}</span>'
+            if raw_evidence
+            else ""
+        )
         missing_evidence = (
             f'<span {_i18n_attrs("Evidence not generated", "Underlag saknas")}>'
             "Evidence not generated</span>"
@@ -664,17 +1071,24 @@ def _render_artifacts(
         rows = []
         for artifact in artifacts:
             label = _e(artifact.label)
-            note = f'<span class="artifact-note">{_e(artifact.note)}</span>' if artifact.note else ""
+            label_sv = artifact.label_sv or artifact.label
+            label_markup = f'<span class="artifact-label" {_i18n_attrs(artifact.label, label_sv)}>{label}</span>'
+            note_sv = artifact.note_sv or artifact.note
+            note = (
+                f'<span class="artifact-note" {_i18n_attrs(artifact.note, note_sv)}>{_e(artifact.note)}</span>'
+                if artifact.note
+                else ""
+            )
             if artifact.exists:
                 href = _href(root / artifact.path, output)
-                target = (
-                    f'<span class="artifact-label">{label}</span>'
-                    f'<a class="artifact-open" href="{href}" {_i18n_attrs("Open file", "Öppna fil")}>Open file</a>'
+                target = label_markup + (
+                    f'<a class="artifact-open" href="{href}" '
+                    f'{_i18n_attrs("Open file", "Öppna fil")}>Open file</a>'
                 )
                 status = "available"
                 status_label = "Available"
             else:
-                target = f"<span>{label}</span>"
+                target = label_markup
                 status = "missing"
                 status_label = "Not generated"
             status_label_sv = "Tillgänglig" if status == "available" else "Inte genererad"
@@ -719,11 +1133,16 @@ def _render_actions(data: OperationsCockpitData) -> str:
 def _render_integrations() -> str:
     rendered_rows = []
     for provider, channel, state, permitted, blocked in _integration_profiles():
+        provider_sv = {
+            "CSV accounting exchange": "CSV-utbyte för redovisning",
+            "SIE accounting exchange": "SIE-utbyte för redovisning",
+            "Supervised computer use": "Övervakad datoranvändning",
+        }.get(provider, provider)
         rendered_rows.append(
             f"""
       <tr>
-        <th scope="row">{_e(provider)}</th>
-        <td data-label="Channel" data-label-en="Channel" data-label-sv="Kanal">{_e(channel)}</td>
+        <th scope="row" {_i18n_attrs(provider, provider_sv)}>{_e(provider)}</th>
+        <td data-label="Channel" data-label-en="Channel" data-label-sv="Kanal" {_i18n_attrs(channel, _integration_text_sv(channel))}>{_e(channel)}</td>
         <td data-label="Current state" data-label-en="Current state" data-label-sv="Aktuellt läge" {_i18n_attrs(state, _integration_text_sv(state))}>{_e(state)}</td>
         <td data-label="Permitted" data-label-en="Permitted" data-label-sv="Tillåtet" {_i18n_attrs(permitted, _integration_text_sv(permitted))}>{_e(permitted)}</td>
         <td data-label="Blocked" data-label-en="Blocked" data-label-sv="Blockerat" {_i18n_attrs(blocked, _integration_text_sv(blocked))}>{_e(blocked)}</td>
@@ -735,10 +1154,11 @@ def _render_integrations() -> str:
   <div class="section-heading">
     <div>
       <h2 id="integrations-title" data-i18n data-en="Integrations" data-sv="Integrationer">Integrations</h2>
-      <p data-i18n data-en="One capability contract across ERP providers. A configured connection may narrow permissions, but it can never widen this build's boundary." data-sv="Ett gemensamt behörighetskontrakt gäller för alla ERP-leverantörer. En konfigurerad anslutning får begränsa behörigheter men aldrig utöka versionens gräns.">One capability contract across ERP providers. A configured connection may narrow permissions, but it can never widen this build's boundary.</p>
+      <p data-i18n data-en="One read-only conformance contract across ERP and exchange providers. Exact tenant/company binding, source hashes, schema versions, cursors, and retry evidence are required." data-sv="Ett skrivskyddat konformitetskontrakt gäller för ERP- och utbytesleverantörer. Exakt tenant-/företagsbindning, källhashar, schemaversioner, markörer och återförsöksunderlag krävs.">One read-only conformance contract across ERP and exchange providers. Exact tenant/company binding, source hashes, schema versions, cursors, and retry evidence are required.</p>
     </div>
   </div>
-  <div class="table-frame">
+  <div class="guided-only guided-summary"><strong data-i18n data-en="Connections stay read-only" data-sv="Anslutningar förblir skrivskyddade">Connections stay read-only</strong><p data-i18n data-en="Fortnox has a guarded read-only preview path. NetSuite, Oracle, SAP, Odoo, SIE, and CSV are declared contracts, not connected production integrations." data-sv="Fortnox har en bevakad skrivskyddad förhandsväg. NetSuite, Oracle, SAP, Odoo, SIE och CSV är deklarerade kontrakt, inte anslutna produktionsintegrationer.">Fortnox has a guarded read-only preview path. NetSuite, Oracle, SAP, Odoo, SIE, and CSV are declared contracts, not connected production integrations.</p></div>
+  <div class="table-frame expert-only">
     <table class="integration-table">
       <caption data-i18n data-en="Provider-neutral capability matrix" data-sv="Leverantörsneutral behörighetsmatris">Provider-neutral capability matrix</caption>
       <thead><tr><th scope="col" data-i18n data-en="Provider" data-sv="Leverantör">Provider</th><th scope="col" data-i18n data-en="Channel" data-sv="Kanal">Channel</th><th scope="col" data-i18n data-en="Current state" data-sv="Aktuellt läge">Current state</th><th scope="col" data-i18n data-en="Permitted" data-sv="Tillåtet">Permitted</th><th scope="col" data-i18n data-en="Blocked" data-sv="Blockerat">Blocked</th></tr></thead>
@@ -754,40 +1174,45 @@ def _render_integrations() -> str:
 
 def _integration_profiles() -> tuple[tuple[str, str, str, str, str], ...]:
     rows: list[tuple[str, str, str, str, str]] = []
-    for profile in list_erp_profiles():
-        if profile.provider is ErpProvider.SUPERVISED_COMPUTER_USE:
-            rows.append(
-                (
-                    profile.display_name,
-                    profile.transport,
-                    "Observation-only fallback",
-                    " · ".join(COMPUTER_USE_BOUNDARY.allowed_tasks),
-                    " · ".join(COMPUTER_USE_BOUNDARY.forbidden_tasks),
-                )
-            )
-            continue
+    for manifest in list_connector_manifests():
+        state = {
+            ProviderLifecycle.GUARDED_READ_ONLY: "Guarded read-only",
+            ProviderLifecycle.LOCAL_SUPPORTED: "Local supported",
+            ProviderLifecycle.DECLARATION_ONLY: "Declaration only",
+        }[manifest.lifecycle]
         permitted = [
             declaration.capability.value.replace("_", " ")
-            for declaration in profile.capabilities
-            if declaration.mode in {
-                CapabilityMode.LOCAL_ONLY,
-                CapabilityMode.GUARDED_READ_ONLY,
-            }
+            for declaration in manifest.capabilities
+            if declaration.mode.value in {"local_only", "read_only"}
         ]
         rows.append(
             (
-                profile.display_name,
-                profile.transport,
-                profile.connection_status.replace("_", " ").capitalize(),
+                manifest.display_name,
+                "Connector contract v1",
+                state,
                 " · ".join(permitted) or "No connected capabilities",
                 "External draft · post · approve · send · pay · file · delete · settings",
             )
         )
+    rows.append(
+        (
+            "Supervised computer use",
+            "Visible operator session",
+            "Observation-only fallback",
+            " · ".join(COMPUTER_USE_BOUNDARY.allowed_tasks),
+            " · ".join(COMPUTER_USE_BOUNDARY.forbidden_tasks),
+        )
+    )
     return tuple(rows)
 
 
 _INTEGRATION_SV = {
     "Mocked dry run only": "Endast simulerad torrkörning",
+    "Connector contract v1": "Anslutningskontrakt v1",
+    "Visible operator session": "Synlig operatörssession",
+    "Guarded read-only": "Bevakat skrivskyddat läge",
+    "Local supported": "Lokalt stöd",
+    "Declaration only": "Endast deklaration",
     "Manifest only": "Endast manifest",
     "Local fixture path": "Lokal sökväg för testdata",
     "Observation-only fallback": "Reservläge för skrivskyddad observation",
@@ -806,6 +1231,7 @@ _INTEGRATION_SV = {
     "read transactions": "läs transaktioner",
     "read period locks": "läs periodlås",
     "import staged": "importera mellanlagrat",
+    "import local": "importera lokalt",
     "export raw": "exportera rådata",
     "validate local": "validera lokalt",
     "prepare local draft": "förbered lokalt utkast",
@@ -842,33 +1268,46 @@ def _render_controls(
     </div>
   </div>
   {_render_safety(data)}
-  <div class="subsection-heading">
-    <h3 data-i18n data-en="Local evidence library" data-sv="Lokalt underlagsbibliotek">Local evidence library</h3>
-    <p data-i18n data-en="Grouped by purpose. Links are emitted only for existing files under the workspace." data-sv="Grupperat efter syfte. Länkar skapas endast för befintliga filer i arbetsytan.">Grouped by purpose. Links are emitted only for existing files under the workspace.</p>
+  <div class="guided-only guided-summary"><strong data-i18n data-en="Evidence stays traceable" data-sv="Underlag förblir spårbart">Evidence stays traceable</strong><p data-i18n data-en="Every proposal keeps its source hashes and review reason. Raw JSON, identifiers, and operator commands are available only in Expert view." data-sv="Varje förslag behåller sina källhashar och sin granskningsorsak. Rå JSON, identifierare och operatörskommandon visas endast i Expertläget.">Every proposal keeps its source hashes and review reason. Raw JSON, identifiers, and operator commands are available only in Expert view.</p></div>
+  <div class="expert-only">
+    <div class="subsection-heading">
+      <h3 data-i18n data-en="Local evidence library" data-sv="Lokalt underlagsbibliotek">Local evidence library</h3>
+      <p data-i18n data-en="Grouped by purpose. Links are emitted only for existing files under the workspace." data-sv="Grupperat efter syfte. Länkar skapas endast för befintliga filer i arbetsytan.">Grouped by purpose. Links are emitted only for existing files under the workspace.</p>
+    </div>
+    {_render_artifacts(data, root, output)}
+    {_render_actions(data)}
   </div>
-  {_render_artifacts(data, root, output)}
-  {_render_actions(data)}
 </section>""".strip()
 
 
 def _render_footer(data: OperationsCockpitData) -> str:
     return f"""
 <footer class="site-footer">
-  <div class="shell footer-line">
-    <p><span data-i18n data-en="Local static cockpit" data-sv="Lokal statisk cockpit">Local static cockpit</span> · <time datetime="{_e(data.generated_at)}">{_e(_display_time(data.generated_at))}</time></p>
-    <p data-i18n data-en="No external network assets · no live integration authority" data-sv="Inga externa nätverksresurser · ingen behörighet i live-integrationer">No external network assets · no live integration authority</p>
+  <div class="shell footer-statement">
+    <p class="footer-claim" data-i18n data-en="The agent prepares. People decide." data-sv="Agenten förbereder. Människor beslutar.">The agent prepares. People decide.</p>
+    <div class="footer-line">
+      <p>Accounting Agent v1 · <time datetime="{_e(data.generated_at)}">{_e(_display_time(data.generated_at))}</time></p>
+      <p data-i18n data-en="Static synthetic preview · no external network assets · no live authority" data-sv="Statisk syntetisk förhandsvisning · inga externa nätverksresurser · ingen livebehörighet">Static synthetic preview · no external network assets · no live authority</p>
+    </div>
   </div>
 </footer>""".strip()
 
 
-def _render_command_dialog() -> str:
-    commands = (
+def _render_command_dialog(data: OperationsCockpitData) -> str:
+    commands = [
         ("#today", "Open Today", "Öppna Idag", "Run state and live counters", "Körläge och live-räknare"),
         ("#review", "Open Review", "Öppna Granskning", "Prioritised human decisions", "Prioriterade mänskliga beslut"),
+        ("#close", "Open Close", "Öppna Bokslut", "Dependency-aware close controls", "Beroendestyrda bokslutskontroller"),
+        ("#automation", "Open Automation", "Öppna Automatisering", "Safe stages and model routing", "Säkra steg och modellstyrning"),
         ("#workflow", "Open Workflow", "Öppna Arbetsflöde", "Deterministic and specialist-agent stages", "Deterministiska steg och specialistagenter"),
         ("#integrations", "Open Integrations", "Öppna Integrationer", "ERP and supervised computer-use boundaries", "ERP-gränser och övervakad datoranvändning"),
         ("#controls", "Open Controls & evidence", "Öppna Kontroller och underlag", "Policy, artifacts, and local commands", "Policy, underlag och lokala kommandon"),
-    )
+    ]
+    if data.local_readiness != "local_fake_client_dry_run_complete":
+        commands.insert(
+            1,
+            ("#setup", "Open Start", "Öppna Start", "Entity, evidence, controls, and proof run", "Enhet, underlag, kontroller och provkörning"),
+        )
     items = "".join(
         f'<li><a href="{href}"><strong {_i18n_attrs(label, label_sv)}>{_e(label)}</strong><span {_i18n_attrs(detail, detail_sv)}>{_e(detail)}</span></a></li>'
         for href, label, label_sv, detail, detail_sv in commands
@@ -885,6 +1324,7 @@ def _render_command_dialog() -> str:
       <input id="command-search" type="search" autocomplete="off" placeholder="Type a section name…" data-placeholder-en="Type a section name…" data-placeholder-sv="Skriv ett sektionsnamn…">
     </label>
     <ul class="command-listbox" id="command-list">{items}</ul>
+    <p class="command-empty" id="command-empty" aria-live="polite" hidden data-i18n data-en="No matching section." data-sv="Ingen matchande sektion.">No matching section.</p>
     <p class="command-hint" data-i18n data-en="Use ↑ and ↓ to move, Enter to open, and Escape to close." data-sv="Använd ↑ och ↓ för att flytta, Enter för att öppna och Escape för att stänga.">Use ↑ and ↓ to move, Enter to open, and Escape to close.</p>
   </form>
 </dialog>""".strip()
@@ -1357,33 +1797,33 @@ def _mode_reason(packet: dict[str, Any], summary: dict[str, Any]) -> str:
 
 def _collect_artifacts(root: Path, fake_root: Path, demo_root: Path) -> tuple[ArtifactLink, ...]:
     artifacts: list[ArtifactLink] = []
-    for label, rel_path, kind, note in (
-        ("Fake-client manifest", ".local/fake_client_dry_run/manifest.json", "manifest", "full synthetic month run"),
-        ("Fake-client summary", ".local/fake_client_dry_run/summary.json", "summary", "counts and readiness"),
-        ("Fake-client audit log", ".local/fake_client_dry_run/audit_log.jsonl", "audit log", "append-only local events"),
-        ("Bank reconciliation proposals", ".local/fake_client_dry_run/bank_reconciliation_proposals.json", "bank proposals", "local proposal batch"),
-        ("Supplier autopilot manifest", ".local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json", "manifest", "supplier workflow output"),
-        ("Supplier autopilot summary", ".local/fake_client_dry_run/supplier_invoice_autopilot/summary.json", "summary", "supplier workflow counts"),
-        ("Local demo manifest", ".local/demo_supplier_invoice_autopilot/manifest.json", "manifest", "small fixture demo"),
-        ("Local demo summary", ".local/demo_supplier_invoice_autopilot/summary.json", "summary", "small fixture counts"),
-        ("Fake-client report", "docs/fake_client_dry_run_report.md", "report", "operator report"),
-        ("Architecture doc", "docs/accounting_agent_architecture.md", "doc", "system boundaries"),
-        ("Fortnox adapter doc", "docs/fortnox_adapter.md", "doc", "dry-run adapter boundary"),
-        ("gnubok shadow ledger doc", "docs/gnubok_shadow_ledger.md", "doc", "shadow validation boundary"),
-        ("Bank reconciliation doc", "docs/bank_reconciliation_autopilot.md", "doc", "bank proposal workflow"),
-        ("Supplier autopilot doc", "docs/local_demo_supplier_invoice_autopilot.md", "doc", "local demo workflow"),
+    for label, label_sv, rel_path, kind, note, note_sv in (
+        ("Fake-client manifest", "Manifest för testkund", ".local/fake_client_dry_run/manifest.json", "manifest", "full synthetic month run", "full syntetisk månadskörning"),
+        ("Fake-client summary", "Sammanfattning för testkund", ".local/fake_client_dry_run/summary.json", "summary", "counts and readiness", "antal och beredskap"),
+        ("Fake-client audit log", "Revisionslogg för testkund", ".local/fake_client_dry_run/audit_log.jsonl", "audit log", "append-only local events", "lokala händelser som endast läggs till"),
+        ("Bank reconciliation proposals", "Förslag till bankavstämning", ".local/fake_client_dry_run/bank_reconciliation_proposals.json", "bank proposals", "local proposal batch", "lokal förslagsbatch"),
+        ("Supplier autopilot manifest", "Manifest för leverantörsautopilot", ".local/fake_client_dry_run/supplier_invoice_autopilot/manifest.json", "manifest", "supplier workflow output", "resultat från leverantörsflöde"),
+        ("Supplier autopilot summary", "Sammanfattning för leverantörsautopilot", ".local/fake_client_dry_run/supplier_invoice_autopilot/summary.json", "summary", "supplier workflow counts", "antal i leverantörsflödet"),
+        ("Local demo manifest", "Manifest för lokal demo", ".local/demo_supplier_invoice_autopilot/manifest.json", "manifest", "small fixture demo", "liten testdatademo"),
+        ("Local demo summary", "Sammanfattning för lokal demo", ".local/demo_supplier_invoice_autopilot/summary.json", "summary", "small fixture counts", "antal i liten testdatademo"),
+        ("Fake-client report", "Rapport för testkund", "docs/fake_client_dry_run_report.md", "report", "operator report", "operatörsrapport"),
+        ("Architecture doc", "Arkitekturdokument", "docs/accounting_agent_architecture.md", "doc", "system boundaries", "systemgränser"),
+        ("Fortnox adapter doc", "Dokumentation för Fortnox-adapter", "docs/fortnox_adapter.md", "doc", "dry-run adapter boundary", "adaptergräns för testkörning"),
+        ("gnubok shadow ledger doc", "Dokumentation för gnubok-skugghuvudbok", "docs/gnubok_shadow_ledger.md", "doc", "shadow validation boundary", "gräns för skuggvalidering"),
+        ("Bank reconciliation doc", "Dokumentation för bankavstämning", "docs/bank_reconciliation_autopilot.md", "doc", "bank proposal workflow", "flöde för bankförslag"),
+        ("Supplier autopilot doc", "Dokumentation för leverantörsautopilot", "docs/local_demo_supplier_invoice_autopilot.md", "doc", "local demo workflow", "lokalt demoflöde"),
     ):
-        artifacts.append(_artifact(root, rel_path, label, kind, note))
+        artifacts.append(_artifact(root, rel_path, label, label_sv, kind, note, note_sv))
 
     group_specs = (
-        (fake_root / "supplier_invoice_autopilot" / "approval_packets" / "json", "*.json", "Supplier approval packet", "approval packet"),
-        (fake_root / "supplier_invoice_autopilot" / "approval_packets" / "markdown", "*.md", "Supplier review packet", "approval packet"),
-        (fake_root / "supplier_invoice_autopilot" / "fortnox_dry_run_payloads", "*.json", "Fortnox dry-run payload", "dry-run payload"),
-        (fake_root / "supplier_invoice_autopilot" / "gnubok_shadow_outputs", "*.json", "gnubok shadow output", "shadow output"),
-        (fake_root / "bank_reconciliation_packets", "*.json", "Bank reconciliation packet", "approval packet"),
-        (demo_root / "approval_packets" / "json", "*.json", "Demo approval packet", "approval packet"),
+        (fake_root / "supplier_invoice_autopilot" / "approval_packets" / "json", "*.json", "Supplier approval packet", "Granskningspaket för leverantör", "approval packet"),
+        (fake_root / "supplier_invoice_autopilot" / "approval_packets" / "markdown", "*.md", "Supplier review packet", "Granskningsunderlag för leverantör", "approval packet"),
+        (fake_root / "supplier_invoice_autopilot" / "fortnox_dry_run_payloads", "*.json", "Fortnox dry-run payload", "Fortnox-underlag för testkörning", "dry-run payload"),
+        (fake_root / "supplier_invoice_autopilot" / "gnubok_shadow_outputs", "*.json", "gnubok shadow output", "gnubok-skuggresultat", "shadow output"),
+        (fake_root / "bank_reconciliation_packets", "*.json", "Bank reconciliation packet", "Granskningspaket för bankavstämning", "approval packet"),
+        (demo_root / "approval_packets" / "json", "*.json", "Demo approval packet", "Granskningspaket för demo", "approval packet"),
     )
-    for folder, pattern, label_prefix, kind in group_specs:
+    for folder, pattern, label_prefix, label_prefix_sv, kind in group_specs:
         paths = sorted(folder.glob(pattern), key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
         for path in paths[:6]:
             rel_path = _rel_to_root(path, root)
@@ -1391,23 +1831,35 @@ def _collect_artifacts(root: Path, fake_root: Path, demo_root: Path) -> tuple[Ar
                 artifacts.append(
                     ArtifactLink(
                         label=f"{label_prefix}: {path.stem}",
+                        label_sv=f"{label_prefix_sv}: {path.stem}",
                         path=rel_path,
                         kind=kind,
                         exists=True,
                         note="latest local file",
+                        note_sv="senaste lokala filen",
                     )
                 )
     return tuple(artifacts)
 
 
-def _artifact(root: Path, rel_path: str, label: str, kind: str, note: str) -> ArtifactLink:
+def _artifact(
+    root: Path,
+    rel_path: str,
+    label: str,
+    label_sv: str,
+    kind: str,
+    note: str,
+    note_sv: str,
+) -> ArtifactLink:
     path = root / rel_path
     return ArtifactLink(
         label=label,
+        label_sv=label_sv,
         path=rel_path,
         kind=kind,
         exists=path.exists(),
         note=note,
+        note_sv=note_sv,
     )
 
 
@@ -1797,44 +2249,61 @@ _ARTIFACT_KIND_SV = {
 }
 
 
+_QUEUE_KEY_SV = {
+    "accounting_proposals": "Bokföringsförslag",
+    "approval_packets": "Granskningspaket",
+    "audit_events": "Revisionshändelser",
+    "documents": "Dokument",
+    "extracted_fields": "Extraherade fält",
+    "intake_cases": "Inkommande ärenden",
+    "policy_decisions": "Policybeslut",
+}
+
+
 _CSS = """
-/* Hallmark · macrostructure: Workbench · tone: calm precise operational · anchor hue: cobalt */
-/* Hallmark · pre-emit critique: P4 H5 E4 S5 R4 V4 · contrast: pass (40–41) · nav: N13 · footer: Ft2 · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30) · mobile: pass (34, 49, 50–57) */
+/* Hallmark · genre: modern-minimal · macrostructure: Narrative Workflow · theme: Coral · enrichment: none · nav: N9 · footer: Ft5
+ * F4 knobs: numbering=1.0/2.0/3.0, layout=vertical-stack, connector=line · F3 knobs: columns=4, rules=every-row, numbers=tabular
+ * context: inferred · audience: accountants/controllers/auditors/operators · use: clear exceptions and advance close · tone: technical-austere
+ * pre-emit: P5 H5 E4 S5 R5 V4 · contrast: pass (40–41) · responsive: pass (34, 49–57)
+ * slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · icons: pass (30)
+ */
 * { box-sizing: border-box; }
-html { min-width: 0; overflow-x: clip; scroll-behavior: smooth; }
+html, body { min-width: 0; overflow-x: clip; }
+html { scroll-behavior: smooth; }
 body {
-  min-width: 0;
-  overflow-x: clip;
   margin: 0;
   background: var(--color-canvas);
   color: var(--color-ink);
   font-family: var(--font-body);
   font-size: var(--text-base);
-  line-height: 1.55;
+  line-height: 1.58;
+  font-variant-numeric: tabular-nums;
 }
 body[data-view="guided"] .expert-only { display: none; }
+body[data-view="expert"] .guided-only { display: none; }
 button, input, select { font: inherit; }
-button, select, input { min-height: 2.75rem; }
 button, select, input, summary, a {
   outline: var(--rule-heavy) solid transparent;
   outline-offset: var(--rule-thin);
   -webkit-tap-highlight-color: var(--color-transparent);
 }
+button, select, input { min-height: 2.75rem; }
 button { cursor: pointer; }
-button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: 0.55; }
-a {
-  color: var(--color-accent-strong);
-  text-decoration-thickness: var(--rule-thin);
-  text-underline-offset: var(--rule-heavy);
+button:disabled, input:disabled, select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
-a:hover { text-decoration-thickness: var(--rule-heavy); }
-a:active, button:active { transform: translateY(var(--rule-thin)); }
 :focus-visible {
   outline: var(--rule-heavy) solid var(--color-focus);
   outline-offset: var(--rule-thin);
 }
 [hidden] { display: none !important; }
 h1, h2, h3 { min-width: 0; overflow-wrap: anywhere; }
+a {
+  color: var(--color-accent-strong);
+  text-decoration-thickness: var(--rule-thin);
+  text-underline-offset: var(--space-2xs);
+}
 code, kbd {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -1855,25 +2324,26 @@ kbd {
   white-space: nowrap;
 }
 .shell {
-  width: min(calc(100% - var(--space-2xl)), 76rem);
+  width: min(calc(100% - (var(--space-md) * 2)), 78rem);
   margin-inline: auto;
 }
 .skip-link {
   position: fixed;
   inset-block-start: var(--space-sm);
   inset-inline-start: var(--space-sm);
-  z-index: 20;
+  z-index: var(--z-toast);
   padding: var(--space-sm) var(--space-md);
   transform: translateY(-200%);
   border-radius: var(--radius-sm);
   background: var(--color-accent-strong);
   color: var(--color-accent-ink);
+  white-space: nowrap;
 }
-.skip-link:focus { transform: translateY(0); }
+.skip-link:focus { transform: none; }
 .environment-strip {
   position: sticky;
   inset-block-start: 0;
-  z-index: 10;
+  z-index: var(--z-sticky);
   border-block-end: var(--rule-thin) solid var(--color-line-strong);
   background: var(--color-ink);
   color: var(--color-surface);
@@ -1882,7 +2352,7 @@ kbd {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-xs) var(--space-md);
+  gap: var(--space-2xs) var(--space-sm);
   min-height: 2.75rem;
   padding-block: var(--space-xs);
   font-size: var(--text-xs);
@@ -1890,53 +2360,85 @@ kbd {
 .environment-inner span { color: var(--color-surface-strong); }
 .environment-inner span::before {
   content: "·";
-  margin-inline-end: var(--space-md);
+  margin-inline-end: var(--space-sm);
   color: var(--color-line-strong);
 }
 .environment-inner .boundary-state { color: var(--color-warning-soft); font-weight: 700; }
-.app-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.78fr);
-  gap: var(--space-lg) var(--space-2xl);
-  padding-block: var(--space-xl) var(--space-2xl);
-  border-block-end: var(--rule-thin) solid var(--color-line);
+.app-header { padding-block: var(--space-md) var(--space-lg); }
+.nav-edge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-block-end: var(--space-lg);
+}
+.wordmark {
+  display: inline-flex;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  align-items: center;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.wordmark span { color: var(--color-accent-strong); font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: 0; }
+.command-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 2.75rem;
+  padding-inline: var(--space-sm);
+  border: var(--rule-thin) solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  white-space: nowrap;
+  transition: background-color var(--dur-short) var(--ease-out);
+}
+.command-trigger > span {
+  position: absolute;
+  width: var(--rule-thin);
+  height: var(--rule-thin);
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 .header-copy h1 {
   max-width: 16ch;
   margin: 0;
   font-family: var(--font-display);
   font-size: var(--text-2xl);
-  line-height: 1.08;
-  letter-spacing: -0.025em;
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
 }
 .header-copy p {
   max-width: 68ch;
   margin: var(--space-md) 0 0;
   color: var(--color-ink-muted);
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
+}
+.workspace-preferences {
+  margin-block-start: var(--space-sm);
+  border-block: var(--rule-thin) solid var(--color-line);
+}
+.workspace-preferences > summary {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: var(--space-xs) 0;
+  color: var(--color-accent-strong);
 }
 .header-tools {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-sm);
-  align-content: start;
+  margin-block-start: var(--space-md);
 }
-.command-trigger {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
-  border: var(--rule-thin) solid var(--color-line-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-ink);
-  text-align: start;
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-.command-trigger:hover { transform: translateY(calc(var(--rule-thin) * -1)); }
-.command-trigger:disabled:hover { transform: none; }
 .field-control, .search-field {
   display: grid;
   gap: var(--space-2xs);
@@ -1948,17 +2450,15 @@ kbd {
 select, input[type="search"] {
   width: 100%;
   min-width: 0;
-  padding: var(--space-xs) var(--space-sm);
+  padding: var(--space-xs) calc(var(--space-xl) - var(--space-xs)) var(--space-xs) var(--space-sm);
   border: var(--rule-thin) solid var(--color-line-strong);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-ink);
 }
-select:hover, input[type="search"]:hover { border-color: var(--color-accent); }
 select:active, input[type="search"]:active { border-color: var(--color-accent-strong); }
 input[type="search"]::placeholder { color: var(--color-ink-muted); }
 .view-toggle {
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-2xs);
@@ -1968,82 +2468,113 @@ input[type="search"]::placeholder { color: var(--color-ink-muted); }
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
 }
-.view-toggle legend { position: absolute; width: var(--rule-thin); height: var(--rule-thin); overflow: hidden; clip-path: inset(50%); }
+.view-toggle legend, .sr-only {
+  position: absolute;
+  width: var(--rule-thin);
+  height: var(--rule-thin);
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 .view-toggle label { position: relative; cursor: pointer; }
-.view-toggle input { position: absolute; inline-size: var(--rule-thin); block-size: var(--rule-thin); opacity: 0; }
+.view-toggle input { inline-size: 0; block-size: 0; margin: 0; padding: 0; opacity: 0; }
 .view-toggle span {
   display: grid;
-  min-height: 2.25rem;
+  min-height: 2.75rem;
   place-items: center;
+  border-block-end: var(--rule-selected) solid transparent;
   border-radius: var(--radius-sm);
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
   font-weight: 700;
+  white-space: nowrap;
 }
-.view-toggle input:checked + span { background: var(--color-surface); color: var(--color-accent-strong); }
+.view-toggle input:checked + span { border-block-end-color: var(--color-accent-strong); background: var(--color-surface); color: var(--color-accent-strong); }
 .view-toggle input:focus-visible + span { outline: var(--rule-heavy) solid var(--color-focus); outline-offset: var(--rule-thin); }
-.role-guidance, .role-boundary {
-  grid-column: 2;
-  margin: 0;
+.view-toggle label:active span { background: var(--color-accent-soft); }
+.view-toggle input:disabled + span { cursor: not-allowed; opacity: 0.55; }
+.role-guidance, .role-boundary, .generation-stamp {
+  margin: var(--space-sm) 0 0;
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
-.role-boundary { font-size: var(--text-xs); }
-.generation-stamp {
-  grid-column: 1;
-  grid-row: 2;
-  margin: 0;
-  align-self: end;
-  color: var(--color-ink-muted);
-  font-size: var(--text-xs);
+.role-boundary, .generation-stamp { font-size: var(--text-xs); }
+.generation-stamp { display: none; }
+.section-nav {
+  border-block: var(--rule-thin) solid var(--color-line);
+  background: var(--color-surface);
 }
-.section-nav { border-block-end: var(--rule-thin) solid var(--color-line); background: var(--color-surface); }
-.section-nav-inner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-lg); padding-block: var(--space-sm); }
-.section-nav a { min-inline-size: 2.75rem; min-height: 2.75rem; display: inline-flex; align-items: center; color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 700; text-decoration: none; white-space: nowrap; }
-.section-nav a:hover { color: var(--color-accent-strong); text-decoration: underline; }
+.section-nav-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  overflow-x: auto;
+  padding-block: var(--space-xs);
+  scrollbar-width: thin;
+}
+.section-nav a {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding-inline: var(--space-2xs);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
 main.shell { padding-block: var(--space-sm) var(--space-3xl); }
+#today { padding-block-start: var(--space-lg); }
 .workbench-section {
   scroll-margin-block-start: var(--space-3xl);
   padding-block: var(--space-2xl);
   border-block-end: var(--rule-thin) solid var(--color-line);
 }
 .section-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  gap: var(--space-lg);
+  display: grid;
+  gap: var(--space-sm);
   margin-block-end: var(--space-lg);
 }
 .section-heading h2 {
   margin: 0;
   font-family: var(--font-display);
   font-size: var(--text-xl);
-  line-height: 1.2;
+  font-weight: 700;
+  line-height: 1.16;
+  letter-spacing: -0.025em;
 }
-.section-heading p, .subsection-heading p { max-width: 72ch; margin: var(--space-xs) 0 0; color: var(--color-ink-muted); }
-.section-heading .last-run, .section-heading .result-count { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); white-space: nowrap; }
+.section-heading p, .subsection-heading p {
+  max-width: 72ch;
+  margin: var(--space-xs) 0 0;
+  color: var(--color-ink-muted);
+}
+.section-heading .last-run, .section-heading .result-count {
+  margin: 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
 .stat-strip {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   margin: 0;
-  border-block: var(--rule-thin) solid var(--color-line);
+  border-block-start: var(--rule-thin) solid var(--color-line);
 }
 .stat {
   min-width: 0;
-  padding: var(--space-md);
-  border-inline-end: var(--rule-thin) solid var(--color-line);
+  padding: var(--space-md) 0;
+  border-block-end: var(--rule-thin) solid var(--color-line);
 }
-.stat:last-child { border-inline-end: 0; }
 .stat dt { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 700; }
-.stat dd { margin: var(--space-sm) 0 var(--space-2xs); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; overflow-wrap: anywhere; }
+.stat dd { margin: var(--space-xs) 0 var(--space-2xs); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; overflow-wrap: anywhere; }
 .stat span { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
 .stat[data-tone="safe"] dd { color: var(--color-safe); }
 .stat[data-tone="warning"] dd { color: var(--color-warning); }
 .stat[data-tone="danger"] dd { color: var(--color-danger); }
 .boundary-notice {
   display: grid;
-  grid-template-columns: minmax(10rem, 0.32fr) minmax(0, 1fr);
-  gap: var(--space-md);
+  gap: var(--space-sm);
   margin-block-start: var(--space-lg);
   padding: var(--space-md);
   border: var(--rule-thin) solid var(--color-line-strong);
@@ -2052,95 +2583,115 @@ main.shell { padding-block: var(--space-sm) var(--space-3xl); }
 .boundary-notice[data-tone="danger"] { border-color: var(--color-danger); background: var(--color-danger-soft); }
 .boundary-notice[data-tone="warning"] { border-color: var(--color-warning); background: var(--color-warning-soft); }
 .boundary-notice[data-tone="neutral"] { border-color: var(--color-accent); background: var(--color-accent-soft); }
-.boundary-notice ul { grid-column: 1 / -1; margin: 0; padding-inline-start: var(--space-lg); }
+.boundary-notice ul { margin: 0; padding-inline-start: var(--space-lg); }
+.guided-summary { margin-block: var(--space-lg); padding: var(--space-md); border: var(--rule-thin) solid var(--color-line-strong); background: var(--color-surface); }
+.guided-summary p { max-width: 72ch; margin: var(--space-xs) 0 0; color: var(--color-ink-muted); }
 .local-counts, .artifact-group, .operator-actions {
   margin-block-start: var(--space-lg);
   border: var(--rule-thin) solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-surface);
 }
-summary {
-  min-height: 2.75rem;
-  padding: var(--space-sm) var(--space-md);
-  cursor: pointer;
-  font-weight: 700;
-}
-summary:hover { background: var(--color-surface-muted); }
+summary { min-height: 2.75rem; padding: var(--space-sm) var(--space-md); cursor: pointer; font-weight: 700; }
 summary:active { background: var(--color-surface-strong); }
 details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
-.ledger-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-xs); margin: 0; padding: 0 var(--space-md) var(--space-md); }
+.ledger-counts { display: grid; gap: var(--space-xs); margin: 0; padding: 0 var(--space-md) var(--space-md); }
 .ledger-counts div { display: flex; justify-content: space-between; gap: var(--space-xs); padding: var(--space-xs); border-block-start: var(--rule-thin) solid var(--color-line); }
 .ledger-counts dt { color: var(--color-ink-muted); }
 .ledger-counts dd { margin: 0; font-weight: 700; }
-.review-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.25fr); gap: var(--space-md); margin-block-end: var(--space-md); }
-.attention-list { margin: 0; padding: 0; list-style: none; border-block-start: var(--rule-thin) solid var(--color-line); }
+.review-filters { display: grid; gap: var(--space-md); margin-block-end: var(--space-md); }
+.attention-list, .workflow-sequence, .agent-pipeline,
+.narrative-sequence, .control-sequence, .automation-sequence {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.attention-list { border-block-start: var(--rule-thin) solid var(--color-line); }
 .attention-row {
   display: grid;
-  grid-template-columns: minmax(9rem, 0.26fr) minmax(0, 1fr) minmax(8rem, auto);
-  gap: var(--space-lg);
+  gap: var(--space-sm);
   padding-block: var(--space-lg);
   border-block-end: var(--rule-thin) solid var(--color-line);
 }
-.attention-priority { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-xs); color: var(--color-ink-muted); font-size: var(--text-sm); }
+.attention-priority { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-ink-muted); font-size: var(--text-sm); }
 .severity { display: inline-flex; min-height: 1.5rem; align-items: center; padding-inline: var(--space-xs); border-block-end: var(--rule-heavy) solid var(--color-line-strong); font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; }
 .severity[data-severity="critical"] { border-color: var(--color-danger); color: var(--color-danger); }
 .severity[data-severity="high"] { border-color: var(--color-warning); color: var(--color-warning); }
 .severity[data-severity="medium"] { border-color: var(--color-accent); color: var(--color-accent-strong); }
 .severity[data-severity="low"] { border-color: var(--color-line-strong); color: var(--color-ink-muted); }
-.attention-copy h3 { margin: 0; font-family: var(--font-display); font-size: var(--text-base); }
-.attention-copy p { margin: var(--space-xs) 0 0; color: var(--color-ink-muted); }
+.attention-copy h3, .workflow-step h3, .agent-pipeline h3,
+.narrative-step h3, .control-stage h3, .automation-stage h3 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+.attention-copy p, .workflow-step p, .agent-pipeline p,
+.narrative-step p, .control-stage p, .automation-stage p {
+  margin: var(--space-2xs) 0 0;
+  color: var(--color-ink-muted);
+}
 .attention-copy details { margin-block-start: var(--space-xs); }
-.attention-copy details summary { min-height: 2rem; padding: var(--space-2xs) 0; color: var(--color-accent-strong); font-size: var(--text-sm); }
+.attention-copy details summary { display: flex; min-height: 2.75rem; align-items: center; padding: var(--space-2xs) 0; color: var(--color-accent-strong); font-size: var(--text-sm); }
 .technical-context { display: grid; gap: var(--space-xs); margin: var(--space-xs) 0 0; }
-.technical-context div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--space-sm); }
+.technical-context div { display: grid; gap: var(--space-2xs); }
 .technical-context dt { color: var(--color-ink-muted); }
 .technical-context dd { margin: 0; overflow-wrap: anywhere; }
-.attention-action { align-self: center; text-align: end; font-size: var(--text-sm); }
-.attention-action a, .step-meta a, .artifact-open { display: inline-flex; min-height: 2.75rem; align-items: center; white-space: nowrap; }
+.attention-action { align-self: center; font-size: var(--text-sm); }
+.attention-action a, .step-meta a, .artifact-open, .section-action a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  white-space: nowrap;
+}
 .attention-action span { color: var(--color-ink-muted); }
 .empty-state { margin: 0; padding: var(--space-xl); border: var(--rule-thin) dashed var(--color-line-strong); color: var(--color-ink-muted); text-align: center; }
-.workflow-sequence, .agent-pipeline { margin: 0; padding: 0; list-style: none; }
-.workflow-step {
+.review-empty { align-items: center; justify-content: space-between; gap: var(--space-md); text-align: start; }
+.review-empty:not([hidden]) { display: flex; }
+.workflow-step, .narrative-step, .control-stage, .automation-stage {
   display: grid;
-  grid-template-columns: 3rem minmax(0, 1fr) minmax(9rem, auto);
+  grid-template-columns: 2.75rem minmax(0, 1fr);
   gap: var(--space-md);
   align-items: start;
-  padding-block: var(--space-md);
+  padding-block: var(--space-lg);
   border-block-start: var(--rule-thin) solid var(--color-line);
 }
-.workflow-step:last-child { border-block-end: var(--rule-thin) solid var(--color-line); }
-.step-number { color: var(--color-ink-muted); font-variant-numeric: tabular-nums; }
-.workflow-step h3, .agent-pipeline h3 { margin: 0; font-size: var(--text-base); }
-.workflow-step p, .agent-pipeline p { margin: var(--space-2xs) 0 0; color: var(--color-ink-muted); }
-.step-meta { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: var(--space-sm); color: var(--color-ink-muted); font-size: var(--text-sm); text-align: end; }
-.workflow-step[data-state="review_required"] .step-meta, .workflow-step[data-state="dry_run_only"] .step-meta { color: var(--color-warning); }
+.workflow-step:last-child, .narrative-step:last-child,
+.control-stage:last-child, .automation-stage:last-child { border-block-end: var(--rule-thin) solid var(--color-line); }
+.step-number { color: var(--color-accent-strong); font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.step-meta, .narrative-step > strong, .control-stage > strong {
+  grid-column: 2;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+.step-meta { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; }
+.workflow-step[data-state="review_required"] .step-meta,
+.workflow-step[data-state="dry_run_only"] .step-meta { color: var(--color-warning); }
 .workflow-step[data-state="missing"] .step-meta { color: var(--color-danger); }
 .workflow-step[data-state="available"] .step-meta { color: var(--color-safe); }
+.section-action { margin: var(--space-lg) 0 0; }
 .subsection-heading { margin-block: var(--space-2xl) var(--space-md); }
 .subsection-heading h3 { margin: 0; font-family: var(--font-display); font-size: var(--text-lg); }
 .agent-pipeline > li {
   display: grid;
-  grid-template-columns: minmax(11rem, 0.32fr) minmax(0, 1fr);
-  gap: var(--space-lg);
+  gap: var(--space-sm);
   padding-block: var(--space-md);
   border-block-start: var(--rule-thin) solid var(--color-line);
 }
 .agent-pipeline > li:last-child { border-block-end: var(--rule-thin) solid var(--color-line); }
 .agent-stage { display: flex; gap: var(--space-sm); align-items: baseline; }
-.agent-stage span { color: var(--color-accent); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.agent-stage span { color: var(--color-accent-strong); font-size: var(--text-xs); }
 .table-frame { width: 100%; }
-.integration-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.integration-table, .integration-table thead, .integration-table tbody,
+.integration-table tr, .integration-table th, .integration-table td { display: block; width: 100%; }
+.integration-table { border-collapse: collapse; table-layout: fixed; }
 .integration-table caption { padding-block-end: var(--space-sm); color: var(--color-ink-muted); font-size: var(--text-sm); text-align: start; }
-.integration-table th, .integration-table td { padding: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-line); vertical-align: top; text-align: start; overflow-wrap: anywhere; }
-.integration-table thead th { color: var(--color-ink-muted); font-size: var(--text-xs); }
-.integration-table tbody th { font-family: var(--font-display); }
-.integration-table th:nth-child(1) { width: 14%; }
-.integration-table th:nth-child(2) { width: 14%; }
-.integration-table th:nth-child(3) { width: 16%; }
-.integration-table th:nth-child(4) { width: 27%; }
-.integration-table th:nth-child(5) { width: 29%; }
+.integration-table thead { position: absolute; width: var(--rule-thin); height: var(--rule-thin); overflow: hidden; clip-path: inset(50%); }
+.integration-table tbody tr { padding-block: var(--space-md); border-block-start: var(--rule-thin) solid var(--color-line-strong); }
+.integration-table tbody th { padding: 0 0 var(--space-xs); border: 0; font-family: var(--font-display); text-align: start; }
+.integration-table tbody td { display: grid; grid-template-columns: minmax(6.5rem, 0.4fr) minmax(0, 1fr); gap: var(--space-sm); padding: var(--space-xs) 0; border: 0; overflow-wrap: anywhere; }
+.integration-table tbody td::before { content: attr(data-label); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 700; }
 .safety-boundaries { margin-block-start: var(--space-md); }
-.boundary-columns, .action-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-xl); margin-block-start: var(--space-lg); }
+.boundary-columns, .action-columns { display: grid; gap: var(--space-xl); margin-block-start: var(--space-lg); }
 .boundary-columns h3, .action-columns h3 { margin: 0; font-family: var(--font-display); font-size: var(--text-base); }
 .boundary-list, .command-list { margin: var(--space-sm) 0 0; padding-inline-start: var(--space-lg); }
 .boundary-list li, .command-list li { margin-block: var(--space-xs); }
@@ -2148,23 +2699,28 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
 .blocked li::marker { color: var(--color-danger); }
 .artifact-groups { display: grid; gap: var(--space-sm); }
 .artifact-group { margin: 0; }
-.artifact-group summary { display: flex; justify-content: space-between; gap: var(--space-md); }
+.artifact-group summary { display: grid; gap: var(--space-2xs); }
 .artifact-group summary span:last-child { color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 500; }
 .artifact-list { margin: 0; padding: 0 var(--space-md) var(--space-md); list-style: none; }
-.artifact-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-md); padding-block: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-line); }
-.artifact-list li div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2xs) var(--space-md); min-width: 0; overflow-wrap: anywhere; }
-.artifact-list li .artifact-label { min-width: 0; }
-.artifact-list li .artifact-note { grid-column: 1 / -1; display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
+.artifact-list li { display: grid; gap: var(--space-xs); padding-block: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-line); }
+.artifact-list li div { display: grid; gap: var(--space-2xs); min-width: 0; overflow-wrap: anywhere; }
+.artifact-list li .artifact-note { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
 .artifact-list li strong { color: var(--color-safe); font-size: var(--text-xs); }
 .artifact-list li[data-state="missing"] strong { color: var(--color-warning); }
 .operator-actions { margin: 0; }
 .command-list code { display: inline-block; max-width: 100%; }
-.site-footer { padding-block: var(--space-lg) var(--space-2xl); color: var(--color-ink-muted); font-size: var(--text-xs); }
-.footer-line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); padding-block-start: var(--space-md); border-block-start: var(--rule-thin) solid var(--color-line-strong); }
+.site-footer { padding-block: var(--space-lg) var(--space-2xl); }
+.footer-statement { display: grid; gap: var(--space-lg); }
+.footer-claim { min-width: 0; max-width: 28ch; margin: 0; font-family: var(--font-display); font-size: clamp(1.75rem, 5vw, 3.25rem); font-weight: 700; line-height: 1.06; letter-spacing: -0.025em; overflow-wrap: anywhere; }
+.footer-line { display: grid; gap: var(--space-xs); padding-block-start: var(--space-md); border-block-start: var(--rule-thin) solid var(--color-line-strong); color: var(--color-ink-muted); font-size: var(--text-xs); }
 .footer-line p { margin: 0; }
 .command-dialog {
+  position: fixed;
+  inset: 0;
   width: min(calc(100% - var(--space-xl)), 40rem);
+  height: fit-content;
   max-height: min(80dvh, 42rem);
+  margin: auto;
   padding: 0;
   border: var(--rule-thin) solid var(--color-line-strong);
   border-radius: var(--radius-lg);
@@ -2176,60 +2732,97 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
 .command-shell { padding: var(--space-md); }
 .command-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
 .command-head h2 { margin: 0; font-family: var(--font-display); font-size: var(--text-lg); }
-.dialog-close, .secondary-button { min-height: 2.75rem; padding: var(--space-xs) var(--space-sm); border: var(--rule-thin) solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-ink); font-size: var(--text-sm); line-height: 1.2; }
-.dialog-close:hover, .secondary-button:hover { background: var(--color-surface-muted); }
-.dialog-close:active, .secondary-button:active { background: var(--color-surface-strong); }
-.review-empty { align-items: center; justify-content: space-between; gap: var(--space-md); text-align: start; }
-.review-empty:not([hidden]) { display: flex; }
+.dialog-close, .secondary-button { min-height: 2.75rem; padding: var(--space-xs) var(--space-sm); border: var(--rule-thin) solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-ink); font-size: var(--text-sm); line-height: 1.2; white-space: nowrap; }
 .command-search { margin-block: var(--space-md); }
 .command-listbox { max-height: 24rem; margin: 0; padding: 0; overflow-y: auto; list-style: none; border-block-start: var(--rule-thin) solid var(--color-line); }
 .command-listbox li { border-block-end: var(--rule-thin) solid var(--color-line); }
 .command-listbox a { display: grid; gap: var(--space-2xs); min-height: 3.25rem; padding: var(--space-sm); color: var(--color-ink); text-decoration: none; }
-.command-listbox a:hover, .command-listbox a[data-active="true"] { background: var(--color-accent-soft); }
+.command-listbox a[data-active="true"] { background: var(--color-accent-soft); }
 .command-listbox a span { color: var(--color-ink-muted); font-size: var(--text-sm); }
 .command-hint { margin: var(--space-sm) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
-.sr-only { position: absolute; width: var(--rule-thin); height: var(--rule-thin); overflow: hidden; clip-path: inset(50%); }
-@media (max-width: 64rem) {
-  .app-header { grid-template-columns: minmax(0, 1fr); }
-  .role-guidance, .role-boundary, .generation-stamp { grid-column: 1; grid-row: auto; }
+.command-empty { margin: var(--space-md) 0; padding: var(--space-md); border: var(--rule-thin) dashed var(--color-line-strong); color: var(--color-ink-muted); text-align: center; }
+.section-nav a[aria-current="page"] { border-block-end: var(--rule-selected) solid var(--color-accent-strong); color: var(--color-accent-strong); }
+@media (hover: hover) and (pointer: fine) {
+  a:hover { text-decoration-thickness: var(--rule-heavy); }
+  .command-trigger:hover { background: var(--color-surface-muted); }
+  select:hover, input[type="search"]:hover, summary:hover { background: var(--color-surface-muted); }
+  .view-toggle label:hover span { background: var(--color-surface-strong); }
+  .section-nav a:hover { color: var(--color-accent-strong); text-decoration: underline; }
+  .dialog-close:hover, .secondary-button:hover, .command-listbox a:hover { background: var(--color-accent-soft); }
+}
+a:active, button:active { transform: translateY(var(--rule-thin)); }
+.environment-inner span:not(.boundary-state) { display: none; }
+.environment-inner { flex-wrap: nowrap; justify-content: space-between; }
+.environment-inner .boundary-state::before { display: none; }
+.header-copy h1 { font-size: clamp(2rem, 11vw, 3rem); }
+@media (min-width: 40rem) {
+  .environment-inner span:not(.boundary-state) { display: inline; }
+  .environment-inner { flex-wrap: wrap; justify-content: flex-start; }
+  .environment-inner .boundary-state::before { display: inline; }
+  .header-copy h1 { font-size: var(--text-2xl); }
+  .generation-stamp { display: block; }
+  .shell { width: min(calc(100% - (var(--space-xl) * 2)), 78rem); }
+  .header-tools { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .command-trigger { min-width: 8.5rem; }
+  .command-trigger > span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+  .view-toggle { grid-column: 1 / -1; }
+  .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat { padding: var(--space-md); border-inline-end: var(--rule-thin) solid var(--color-line); }
+  .stat:nth-child(2n) { border-inline-end: 0; }
+  .review-filters { grid-template-columns: minmax(0, 1fr) minmax(11rem, 0.34fr); }
+  .technical-context div { grid-template-columns: 7rem minmax(0, 1fr); gap: var(--space-sm); }
+  .artifact-group summary, .artifact-list li { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .artifact-list li div { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2xs) var(--space-md); }
+  .artifact-list li .artifact-note { grid-column: 1 / -1; }
+  .footer-line { grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; }
+}
+@media (min-width: 60rem) {
+  .app-header { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr); gap: var(--space-xl) var(--space-3xl); }
+  .nav-edge { grid-column: 1 / -1; }
+  .workspace-preferences { margin: 0; align-self: start; }
+  .header-tools { align-content: start; }
+  .role-guidance, .role-boundary { margin-inline: 0; }
+  .header-copy p { font-size: var(--text-lg); }
+  .generation-stamp { grid-column: 1; grid-row: 3; align-self: end; }
+  .section-heading { grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-xl); }
   .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .stat:nth-child(3) { border-inline-end: 0; }
-  .stat:nth-child(-n + 3) { border-block-end: var(--rule-thin) solid var(--color-line); }
+  .stat:nth-child(2n) { border-inline-end: var(--rule-thin) solid var(--color-line); }
+  .stat:nth-child(3n) { border-inline-end: 0; }
+  .attention-row { grid-template-columns: minmax(9rem, 0.26fr) minmax(0, 1fr) minmax(8rem, auto); gap: var(--space-lg); }
+  .attention-priority { flex-direction: column; align-items: flex-start; }
+  .attention-action { text-align: end; }
+  .workflow-step, .narrative-step, .control-stage { grid-template-columns: 3rem minmax(0, 1fr) minmax(10rem, auto); }
+  .step-meta, .narrative-step > strong, .control-stage > strong { grid-column: 3; text-align: end; }
+  .automation-stage { grid-template-columns: 3rem minmax(0, 1fr); }
+  .agent-pipeline > li { grid-template-columns: minmax(11rem, 0.32fr) minmax(0, 1fr); gap: var(--space-lg); }
+  .boundary-notice { grid-template-columns: minmax(12rem, 0.32fr) minmax(0, 1fr); gap: var(--space-lg); }
+  .boundary-notice ul { grid-column: 1 / -1; }
+  .ledger-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .boundary-columns, .action-columns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .integration-table { display: table; }
+  .integration-table thead { position: static; display: table-header-group; width: auto; height: auto; overflow: visible; clip-path: none; }
+  .integration-table tbody { display: table-row-group; }
+  .integration-table tr { display: table-row; }
+  .integration-table th, .integration-table td { display: table-cell; width: auto; padding: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-line); vertical-align: top; text-align: start; overflow-wrap: anywhere; }
+  .integration-table tbody tr { padding: 0; border: 0; }
+  .integration-table tbody th { padding: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-line); }
+  .integration-table tbody td::before { display: none; }
+  .integration-table th:nth-child(1) { width: 16%; }
+  .integration-table th:nth-child(2) { width: 15%; }
+  .integration-table th:nth-child(3) { width: 16%; }
+  .integration-table th:nth-child(4) { width: 26%; }
+  .integration-table th:nth-child(5) { width: 27%; }
+  .model-table th:nth-child(1) { width: 22%; }
+  .model-table th:nth-child(2) { width: 18%; }
+  .model-table th:nth-child(3) { width: 24%; }
+  .model-table th:nth-child(4) { width: 36%; }
 }
-@media (max-width: 48rem) {
-  .shell { width: min(calc(100% - var(--space-lg)), 76rem); }
-  .section-heading, .boundary-notice, .boundary-columns, .action-columns, .agent-pipeline > li { grid-template-columns: minmax(0, 1fr); display: grid; align-items: start; }
-  .section-heading .last-run, .section-heading .result-count { white-space: normal; }
-  .review-filters { grid-template-columns: minmax(0, 1fr); }
-  .attention-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
-  .attention-priority { flex-direction: row; align-items: center; }
-  .attention-action { text-align: start; }
-  .workflow-step { grid-template-columns: 2.5rem minmax(0, 1fr); }
-  .workflow-step .step-meta { grid-column: 2; justify-content: flex-start; text-align: start; }
-  .integration-table, .integration-table thead, .integration-table tbody, .integration-table tr, .integration-table th, .integration-table td { display: block; width: 100%; }
-  .integration-table thead { position: absolute; width: var(--rule-thin); height: var(--rule-thin); overflow: hidden; clip-path: inset(50%); }
-  .integration-table tbody tr { padding-block: var(--space-md); border-block-start: var(--rule-thin) solid var(--color-line-strong); }
-  .integration-table tbody th { padding: 0 0 var(--space-xs); border: 0; }
-  .integration-table tbody td { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--space-sm); padding: var(--space-xs) 0; border: 0; }
-  .integration-table tbody td::before { content: attr(data-label); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 700; }
-  .footer-line { flex-direction: column; gap: var(--space-xs); }
-}
-@media (max-width: 30rem) {
-  .environment-inner { gap: var(--space-2xs) var(--space-xs); }
-  .environment-inner span::before { margin-inline-end: var(--space-xs); }
-  .app-header { padding-block: var(--space-md) var(--space-lg); }
-  .header-tools { grid-template-columns: minmax(0, 1fr); }
-  .command-trigger, .view-toggle { grid-column: 1; }
-  .stat-strip { grid-template-columns: minmax(0, 1fr); }
-  .stat { border-inline-end: 0; border-block-end: var(--rule-thin) solid var(--color-line); }
-  .stat:last-child { border-block-end: 0; }
-  .section-nav-inner { gap: var(--space-2xs) var(--space-md); }
-  .technical-context div, .integration-table tbody td { grid-template-columns: minmax(0, 1fr); }
-  .artifact-group summary, .artifact-list li { grid-template-columns: minmax(0, 1fr); display: grid; }
+@media (min-width: 90rem) {
+  .workbench-section { padding-block: var(--space-3xl); }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation-duration: 150ms !important; animation-iteration-count: 1 !important; transition-duration: 150ms !important; }
   .command-trigger:hover, a:active, button:active { transform: none; }
 }
 @media (pointer: coarse) {
@@ -2237,15 +2830,19 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
 }
 @media (forced-colors: active) {
   :focus-visible { outline-color: var(--color-forced-focus); }
-  .environment-strip, .boundary-notice, .severity, .stat, .workflow-step, .agent-pipeline > li { forced-color-adjust: auto; border-color: var(--color-forced-text); }
+  .environment-strip, .boundary-notice, .severity, .stat,
+  .workflow-step, .narrative-step, .control-stage, .automation-stage,
+  .agent-pipeline > li { forced-color-adjust: auto; border-color: var(--color-forced-text); }
   .command-dialog { background: var(--color-forced-canvas); color: var(--color-forced-text); }
 }
 @media print {
-  .environment-strip, .section-nav, .header-tools, .review-filters, .command-dialog, .skip-link { display: none !important; }
+  .environment-strip, .section-nav, .header-tools, .review-filters,
+  .command-dialog, .skip-link, .command-trigger { display: none !important; }
   body { background: var(--color-surface); }
   .shell { width: 100%; }
   .app-header, .workbench-section { break-inside: avoid; padding-block: var(--space-md); }
   .expert-only { display: block !important; }
+  .guided-only { display: none !important; }
   a { color: var(--color-ink); text-decoration: none; }
 }
 """.strip()
@@ -2297,6 +2894,14 @@ _SCRIPT = r"""
   const applyLocale = (locale) => {
     const resolved = locale === "sv-SE" ? "sv-SE" : "en-GB";
     document.documentElement.lang = resolved;
+    document.title = resolved === "sv-SE"
+      ? "Accounting Agent v1 · Redovisningsarbete"
+      : "Accounting Agent v1 · Operations";
+    const description = document.querySelector('meta[name="description"]');
+    if (description) description.setAttribute(
+      "content",
+      resolved === "sv-SE" ? description.dataset.contentSv : description.dataset.contentEn
+    );
     body.dataset.locale = resolved;
     if (localeSelect) localeSelect.value = resolved;
     document.querySelectorAll("[data-i18n]").forEach((node) => {
@@ -2387,6 +2992,7 @@ _SCRIPT = r"""
   const dialog = document.querySelector("#command-dialog");
   const commandSearch = document.querySelector("#command-search");
   const commandItems = [...document.querySelectorAll("#command-list li")];
+  const commandEmpty = document.querySelector("#command-empty");
   let activeIndex = 0;
   if (commandShortcut) commandShortcut.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
 
@@ -2404,7 +3010,9 @@ _SCRIPT = r"""
     const query = commandSearch ? commandSearch.value.trim().toLocaleLowerCase() : "";
     commandItems.forEach((item) => item.hidden = Boolean(query) && !item.textContent.toLocaleLowerCase().includes(query));
     activeIndex = 0;
-    visibleCommandLinks().forEach((link, index) => link.dataset.active = String(index === 0));
+    const links = visibleCommandLinks();
+    links.forEach((link, index) => link.dataset.active = String(index === 0));
+    if (commandEmpty) commandEmpty.hidden = links.length !== 0;
   };
   const openCommands = () => {
     if (!dialog) return;
@@ -2435,6 +3043,12 @@ _SCRIPT = r"""
   });
   commandSearch?.addEventListener("input", filterCommands);
   commandSearch?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeCommands();
+      return;
+    }
     if (["ArrowDown", "ArrowUp"].includes(event.key)) {
       event.preventDefault();
       event.stopPropagation();
@@ -2451,6 +3065,23 @@ _SCRIPT = r"""
   commandItems.forEach((item) => item.querySelector("a")?.addEventListener("click", closeCommands));
   dialog?.addEventListener("click", (event) => { if (event.target === dialog) closeCommands(); });
   dialog?.addEventListener("close", () => trigger?.focus());
+
+  const sectionLinks = [...document.querySelectorAll(".section-nav a[href^='#']")];
+  const markCurrentSection = (id) => sectionLinks.forEach((link) => {
+    if (link.getAttribute("href") === `#${id}`) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  markCurrentSection((window.location.hash || "#today").slice(1));
+  window.addEventListener("hashchange", () => markCurrentSection((window.location.hash || "#today").slice(1)));
+  if ("IntersectionObserver" in window) {
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => Math.abs(a.boundingClientRect.top) - Math.abs(b.boundingClientRect.top));
+      if (visible[0]?.target?.id) markCurrentSection(visible[0].target.id);
+    }, { rootMargin: "-20% 0px -65% 0px", threshold: 0 });
+    document.querySelectorAll("main > section[id]").forEach((section) => observer.observe(section));
+  }
 
   applyLocale(readPreference("accounting-cockpit-locale", "en-GB"));
   updateRoleGuidance();

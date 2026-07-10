@@ -49,6 +49,7 @@ from .bank_reconciliation import (
     build_reconciliation_proposal,
     load_fixture_catalog,
 )
+from .connector_contract import ConnectorBinding, ConnectorEnvironment
 from .documents import InvoiceMetadata, extract_invoice_metadata, file_sha256
 from .external_writes import (
     EmailWriteAdapter,
@@ -100,6 +101,7 @@ from .intake import (
 from .permits import (
     ExecutionPermit,
     InMemoryPermitStore,
+    PermitApprovalReceipt,
     PermitError,
     PermitForbidden,
     PermitIssuer,
@@ -107,7 +109,10 @@ from .permits import (
     PermitValidationError,
     PermitValidator,
     SQLitePermitStore,
+    TrustedApprovalAuthority,
+    build_permit_approval_request,
     canonical_payload_hash,
+    canonical_policy_decision_hash,
 )
 from .policy import (
     ActionType,
@@ -151,11 +156,13 @@ from .restricted_fortnox_mcp import (
     UnknownRestrictedTool,
 )
 from .workflow import CaseReviewResult, review_supplier_invoice_case
+from .v1 import V1_RELEASE, build_v1_platform_summary, run_v1_synthetic_system_check
 
-__version__ = "0.2.0"
+__version__ = V1_RELEASE
 
 __all__ = [
     "__version__",
+    "V1_RELEASE",
     "ActionType",
     "AccountingCase",
     "AccountingCaseType",
@@ -177,6 +184,8 @@ __all__ = [
     "ClientMappingRule",
     "COMPUTER_USE_BOUNDARY",
     "ComputerUseBoundary",
+    "ConnectorBinding",
+    "ConnectorEnvironment",
     "CurrencySpec",
     "DEFAULT_FORTNOX_BASE_URL",
     "EmailWriteAdapter",
@@ -220,6 +229,7 @@ __all__ = [
     "MissingInfoReason",
     "PermissionMode",
     "PermitError",
+    "PermitApprovalReceipt",
     "PermitForbidden",
     "PermitIssuer",
     "PermitReviewRequired",
@@ -245,6 +255,7 @@ __all__ = [
     "ReviewDecision",
     "SQLiteIntakeStore",
     "SQLitePermitStore",
+    "TrustedApprovalAuthority",
     "ShadowLedgerComparison",
     "ShadowLedgerUnavailable",
     "SupplierInvoiceProposal",
@@ -261,6 +272,8 @@ __all__ = [
     "build_candidates",
     "build_reconciliation_proposal",
     "canonical_payload_hash",
+    "canonical_policy_decision_hash",
+    "build_permit_approval_request",
     "draft_missing_info_email",
     "evaluate_policy",
     "erp_registry_summary",
@@ -288,4 +301,6 @@ __all__ = [
     "supplier_invoice_proposal_from_dict",
     "teams_message_file_source",
     "write_approval_packet",
+    "build_v1_platform_summary",
+    "run_v1_synthetic_system_check",
 ]

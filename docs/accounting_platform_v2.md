@@ -1,4 +1,7 @@
-# Accounting Agent v2 — platform contract
+# Accounting Agent v1 — platform foundation and future contract
+
+The filename is retained for historical links; this document describes the
+shipped v1 foundation and clearly labels future integration work.
 
 Status: functional local foundation for synthetic data. Not a production
 accounting system, tax engine, filing service, or live ERP connector.
@@ -43,12 +46,14 @@ storage uses a reversible versioned base32 key, so path-hostile IDs such as
 `a/b` and `a?b`, and case variants such as `Client-A` and `client-a`, cannot
 share a folder even on a case-insensitive filesystem.
 
-The local supplier queue uses schema version 2 with explicit client ownership.
-An older unscoped row is a hard review stop: it is never silently assigned to
-the current client and its old case ID or source path is not disclosed. The
-`LocalQueue.map_legacy_rows_to_client()` method exists only for an operator who
-knows that the complete legacy single-client queue belongs to one exact client;
-partial or conflicting mappings are refused.
+The local supplier queue uses schema version 3 with explicit client and legal-
+entity ownership on every case, document, extracted-field, proposal, decision,
+packet, and audit row. Duplicate history is queried by both identities. An
+older unscoped row is a hard review stop: schema migration adds nullable scope
+columns but never assigns an owner or discloses the old case ID or source path.
+Client-only mapping is forbidden. After independently verifying provenance, an
+operator may use `LocalQueue.map_legacy_rows_to_entity()` with both exact IDs;
+partial or conflicting mappings are refused transactionally.
 
 Evidence passed to a specialist plan uses typed `EvidenceReference` values
 bound to the exact entity, URI, optional SHA-256, and evidence budget. Unknown
@@ -168,7 +173,22 @@ staged import, raw export, local validation, local draft preparation, and local
 simulation. External post, approve, send, pay, file, delete, and settings-change
 capabilities remain forbidden.
 
-| Provider | Current v2 status | Intended first integration |
+Executable connector reads have one contract boundary:
+`read_connector_page_guarded`. Before invoking an adapter once, it verifies the
+adapter/manifest provider, exact tenant/company/environment/auth binding, an
+available read capability, page-size limit, and request cursor. Environment is
+required and normalized to the closed `local`, `sandbox`, or `production`
+vocabulary inside the immutable `ConnectorBinding`; it is also included in the
+serialized binding envelope. After the call, the gateway rejects adapter scope
+or environment drift and any returned provider, binding, schema version,
+mapping version, or cursor outside that preflight contract. This prevents a
+sandbox request from being satisfied by production-scoped adapter state (and
+vice versa). The tests use deterministic fixture and adversarial adapters only.
+This gateway does not configure a live connection, supply credentials, enable
+any write, or turn the declaration-only NetSuite, Oracle, SAP, Odoo, SIE, or CSV
+manifests into implemented connectors.
+
+| Provider | Current v1 status | Intended first integration |
 | --- | --- | --- |
 | Fortnox | local declaration + existing mocked dry run | reference/master reads in a separately approved sandbox |
 | NetSuite | declaration only | OAuth 2.0 role-scoped metadata and read-only SuiteQL |

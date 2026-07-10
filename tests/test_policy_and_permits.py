@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from accounting_agent import (
     ActionType,
+    AmountThresholds,
     EmailWriteAdapter,
     ExecutionPermit,
     FortnoxWriteAdapter,
@@ -16,14 +17,17 @@ from accounting_agent import (
     PermitValidationError,
     PermitValidator,
     PolicyContext,
+    PolicyConfig,
     PolicyDecision,
     SQLitePermitStore,
     canonical_payload_hash,
     evaluate_policy,
 )
+from tests.permit_approval_helpers import issue_test_permit
 
 
 FIXED_NOW = datetime(2026, 5, 16, 12, 0, tzinfo=UTC)
+ENTITY_ID = "entity_123"
 
 
 class PolicyDecisionTests(unittest.TestCase):
@@ -32,6 +36,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=1_500_00,
                 supplier_known=True,
                 duplicate_risk=0.0,
@@ -45,11 +50,93 @@ class PolicyDecisionTests(unittest.TestCase):
         self.assertEqual((), decision.required_reviews)
         self.assertTrue(decision.is_external_write)
 
+    def test_unconfigured_non_sek_currency_escalates_external_draft(self) -> None:
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+                client_id="client_123",
+                currency_code="JPY",
+                amount_minor=1,
+                risk_evidence_complete=True,
+            )
+        )
+
+        self.assertEqual("JPY", decision.currency_code)
+        self.assertIsNone(decision.amount_thresholds)
+        self.assertEqual(PermissionMode.ESCALATION_REQUIRED, decision.permission_mode)
+        self.assertIn("currency_thresholds_not_configured", decision.reasons)
+        self.assertIn("senior_accountant_review", decision.required_reviews)
+
+    def test_explicit_currency_thresholds_enable_currency_safe_draft(self) -> None:
+        thresholds = AmountThresholds(
+            draft_without_review_minor=10_000,
+            escalation_required_minor=100_000,
+        )
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+                client_id="client_123",
+                currency_code="JPY",
+                amount_minor=9_999,
+                risk_evidence_complete=True,
+            ),
+            PolicyConfig(currency_amount_thresholds={"JPY": thresholds}),
+        )
+
+        self.assertEqual(thresholds, decision.amount_thresholds)
+        self.assertEqual(PermissionMode.DRAFT_ONLY, decision.permission_mode)
+        self.assertNotIn("currency_thresholds_not_configured", decision.reasons)
+
+    def test_client_currency_threshold_overrides_global_currency_threshold(self) -> None:
+        global_thresholds = AmountThresholds(
+            draft_without_review_minor=10_000,
+            escalation_required_minor=100_000,
+        )
+        client_thresholds = AmountThresholds(
+            draft_without_review_minor=500,
+            escalation_required_minor=2_000,
+        )
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+                client_id="client_123",
+                currency_code="JPY",
+                amount_minor=2_000,
+                risk_evidence_complete=True,
+            ),
+            PolicyConfig(
+                currency_amount_thresholds={"JPY": global_thresholds},
+                client_currency_amount_thresholds={
+                    ("client_123", "JPY"): client_thresholds
+                },
+            ),
+        )
+
+        self.assertEqual(client_thresholds, decision.amount_thresholds)
+        self.assertEqual(PermissionMode.ESCALATION_REQUIRED, decision.permission_mode)
+        self.assertIn("amount_exceeds_escalation_threshold", decision.reasons)
+
+    def test_currency_and_threshold_configuration_rejects_ambiguous_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "uppercase three-letter"):
+            evaluate_policy(
+                PolicyContext(
+                    action_type=ActionType.READ_ANALYSIS,
+                    client_id="client_123",
+                    currency_code="sek",
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "must exceed"):
+            AmountThresholds(
+                draft_without_review_minor=100,
+                escalation_required_minor=100,
+            )
+
     def test_changed_bank_details_escalate(self) -> None:
         decision = evaluate_policy(
             PolicyContext(
                 action_type=ActionType.UPDATE_SUPPLIER_BANK_DETAILS,
                 client_id="client_123",
+                currency_code="SEK",
                 bank_details_changed=True,
             )
         )
@@ -63,6 +150,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=50_000_00,
             )
         )
@@ -76,6 +164,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 supplier_known=False,
             )
         )
@@ -88,6 +177,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 vat_confidence=0.71,
             )
         )
@@ -100,6 +190,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 duplicate_risk=0.87,
             )
         )
@@ -112,6 +203,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DELETE_RECORD,
                 client_id="client_123",
+                currency_code="SEK",
                 destructive_action=True,
             )
         )
@@ -124,6 +216,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.START_PAYMENT,
                 client_id="client_123",
+                currency_code="SEK",
                 tax_filing_payment=True,
             )
         )
@@ -136,6 +229,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.RECONCILE_BANK_TRANSACTION,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=1_500_00,
             )
         )
@@ -148,6 +242,7 @@ class PolicyDecisionTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.FILE_TAX_RETURN,
                 client_id="client_123",
+                currency_code="SEK",
                 tax_filing_payment=True,
             )
         )
@@ -165,6 +260,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             adapter.execute(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=None,
             )
@@ -179,6 +275,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
         context = PolicyContext(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             client_id="client_123",
+            currency_code="SEK",
             amount_minor=1_500_00,
             risk_evidence_complete=True,
         )
@@ -189,6 +286,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             decision=decision,
             context=context,
             case_id="case_1",
+            entity_id=ENTITY_ID,
             payload=payload,
         )
         result = FortnoxWriteAdapter(
@@ -196,6 +294,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
         ).execute(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             case_id="case_1",
+            entity_id=ENTITY_ID,
             payload=payload,
             permit=permit,
         )
@@ -209,6 +308,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
         context = PolicyContext(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             client_id="client_123",
+            currency_code="SEK",
             amount_minor=1_500_00,
             risk_evidence_complete=True,
         )
@@ -217,6 +317,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             decision=decision,
             context=context,
             case_id="case_1",
+            entity_id=ENTITY_ID,
             payload={"supplier_id": "supplier_1", "amount_minor": 1_500_00},
         )
 
@@ -226,6 +327,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             ).execute(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload={"supplier_id": "supplier_1", "amount_minor": 1_600_00},
                 permit=permit,
             )
@@ -235,6 +337,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
         context = PolicyContext(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             client_id="client_123",
+            currency_code="SEK",
             amount_minor=50_000_00,
         )
         decision = evaluate_policy(context)
@@ -244,31 +347,60 @@ class PermitAndExternalWriteTests(unittest.TestCase):
                 decision=decision,
                 context=context,
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload={"amount_minor": 50_000_00},
             )
 
+    def test_caller_asserted_review_labels_cannot_issue_reviewed_permit(self) -> None:
+        issuer = PermitIssuer(clock=lambda: FIXED_NOW, id_factory=lambda: "permit_forged_review")
+        context = PolicyContext(
+            action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+            client_id="client_123",
+            currency_code="SEK",
+            amount_minor=50_000_00,
+            risk_evidence_complete=True,
+        )
+        decision = evaluate_policy(context)
+
+        with self.assertRaisesRegex(PermitReviewRequired, "trusted approval"):
+            issuer.issue(
+                decision=decision,
+                context=context,
+                case_id="case_forged_review",
+                entity_id=ENTITY_ID,
+                payload={"amount_minor": 50_000_00},
+                approved_reviews=("accountant_review",),
+            )
+
     def test_email_adapter_validates_permit_but_does_not_send(self) -> None:
-        issuer = PermitIssuer(clock=lambda: FIXED_NOW, id_factory=lambda: "permit_test_4")
         context = PolicyContext(
             action_type=ActionType.SEND_EMAIL,
             client_id="client_123",
+            currency_code="SEK",
             external_communication=True,
         )
         decision = evaluate_policy(context)
         payload = {"to": "reviewer@example.invalid", "subject": "Missing receipt"}
-        permit = issuer.issue(
-            decision=decision,
+        permit, _, permit_store, approval_authority = issue_test_permit(
             context=context,
             case_id="case_2",
             payload=payload,
-            approved_reviews=("accountant_review",),
+            now=FIXED_NOW,
+            permit_id="permit_test_4",
+            entity_id=ENTITY_ID,
         )
 
         result = EmailWriteAdapter(
-            PermitValidator(accepted_policy_version=decision.policy_version, clock=lambda: FIXED_NOW)
+            PermitValidator(
+                accepted_policy_version=decision.policy_version,
+                clock=lambda: FIXED_NOW,
+                permit_store=permit_store,
+                approval_authority=approval_authority,
+            )
         ).execute(
             action_type=ActionType.SEND_EMAIL,
             case_id="case_2",
+            entity_id=ENTITY_ID,
             payload=payload,
             permit=permit,
         )
@@ -286,6 +418,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             context = PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=1_500_00,
                 risk_evidence_complete=True,
             )
@@ -294,6 +427,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
                 decision=decision,
                 context=context,
                 case_id="case_1",
+                entity_id=ENTITY_ID,
                 payload={"amount_minor": 1_500_00},
             )
 
@@ -304,6 +438,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
+                currency_code="SEK",
                 amount_minor=1_500_00,
             )
         )
@@ -316,6 +451,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="unmapped",
+                currency_code="SEK",
                 amount_minor=1_500_00,
                 risk_evidence_complete=True,
             )
@@ -328,6 +464,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
         context = PolicyContext(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             client_id="client_123",
+            currency_code="SEK",
             amount_minor=50_000_00,
             risk_evidence_complete=True,
         )
@@ -335,6 +472,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
         forged_decision = PolicyDecision(
             action_type=real_decision.action_type,
             client_id=real_decision.client_id,
+            currency_code=real_decision.currency_code,
             permission_mode=PermissionMode.DRAFT_ONLY,
             policy_version=real_decision.policy_version,
             amount_thresholds=real_decision.amount_thresholds,
@@ -348,6 +486,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
                 decision=forged_decision,
                 context=context,
                 case_id="case_forged",
+                entity_id=ENTITY_ID,
                 payload={"amount_minor": 50_000_00},
             )
 
@@ -365,6 +504,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             expires_at=datetime(2026, 5, 16, 12, 30, tzinfo=UTC),
             idempotency_key="",
             issued_at=FIXED_NOW,
+            entity_id=ENTITY_ID,
         )
 
         with self.assertRaises(PermitValidationError):
@@ -373,6 +513,7 @@ class PermitAndExternalWriteTests(unittest.TestCase):
             ).execute(
                 action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 case_id="case_direct",
+                entity_id=ENTITY_ID,
                 payload=payload,
                 permit=permit,
             )

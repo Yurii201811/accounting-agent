@@ -19,10 +19,13 @@ from accounting_agent import (
     UnknownRestrictedTool,
     evaluate_policy,
 )
+from tests.permit_approval_helpers import issue_test_permit
 
 
 FIXED_NOW = datetime(2026, 5, 16, 12, 0, tzinfo=UTC)
 LOW_RISK_EVIDENCE = {
+    "entity_id": "synthetic-test-entity",
+    "currency": "SEK",
     "supplier_known": True,
     "customer_known": True,
     "bank_details_changed": False,
@@ -55,12 +58,12 @@ def issue_permit(
     action_type: ActionType,
     case_id: str,
     payload: dict[str, object],
-    approved_reviews: tuple[str, ...] = (),
     permit_id: str = "permit_test",
 ):
     context = PolicyContext(
         action_type=action_type,
         client_id=str(payload["client_id"]),
+        currency_code=str(payload["currency"]),
         amount_minor=int(payload.get("amount_minor", 0)),
         supplier_known=bool(payload["supplier_known"]),
         customer_known=bool(payload["customer_known"]),
@@ -75,18 +78,15 @@ def issue_permit(
         tax_filing_payment=bool(payload["tax_filing_payment"]),
         risk_evidence_complete=True,
     )
-    decision = evaluate_policy(context)
-    permit = PermitIssuer(
-        clock=lambda: FIXED_NOW,
-        id_factory=lambda: permit_id,
-    ).issue(
-        decision=decision,
+    permit, decision, permit_store, approval_authority = issue_test_permit(
         context=context,
         case_id=case_id,
         payload=payload,
-        approved_reviews=approved_reviews,
+        now=FIXED_NOW,
+        permit_id=permit_id,
+        entity_id=str(payload["entity_id"]),
     )
-    return permit, decision
+    return permit, decision, permit_store, approval_authority
 
 
 class RestrictedFortnoxRegistryTests(unittest.TestCase):
@@ -166,6 +166,7 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
                 "fortnox_prepare_supplier_invoice_draft",
                 {
                     "client_id": "client_alpha",
+                    "entity_id": "synthetic-test-entity",
                     "supplier_id": "supplier_123",
                     "amount_minor": 1_500_00,
                     "currency": "SEK",
@@ -183,7 +184,7 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
             "amount_minor": 1_500_00,
             "currency": "SEK",
         })
-        permit, decision = issue_permit(
+        permit, decision, _, _ = issue_permit(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             case_id="case_draft_2",
             payload=payload,
@@ -216,7 +217,7 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
                 {"account": "2440", "credit_minor": 2_500_00},
             ],
         })
-        permit, decision = issue_permit(
+        permit, decision, _, _ = issue_permit(
             action_type=ActionType.DRAFT_VOUCHER,
             case_id="case_voucher_1",
             payload=payload,
@@ -244,6 +245,7 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
         context = PolicyContext(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             client_id="client_alpha",
+            currency_code="SEK",
             amount_minor=50_000_00,
             risk_evidence_complete=True,
         )
@@ -254,6 +256,7 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
                 decision=decision,
                 context=context,
                 case_id="case_review_1",
+                entity_id=str(payload["entity_id"]),
                 payload=payload,
             )
 
@@ -265,12 +268,16 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
             "amount_minor": 50_000_00,
             "currency": "SEK",
         })
-        permit, decision = issue_permit(
+        permit, decision, permit_store, approval_authority = issue_permit(
             action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
             case_id="case_review_2",
             payload=payload,
-            approved_reviews=("accountant_review",),
             permit_id="permit_review_2",
+        )
+        mcp.fortnox_adapter.permit_validator = PermitValidator(
+            clock=lambda: FIXED_NOW,
+            permit_store=permit_store,
+            approval_authority=approval_authority,
         )
 
         result = mcp.call_tool(
@@ -284,6 +291,29 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
         self.assertEqual("approval_required", result["policy"]["permission_mode"])
         self.assertEqual("supplier_invoice_draft_prepared_no_live_write", result["status"])
 
+    def test_draft_tool_rejects_cross_entity_permit(self) -> None:
+        mcp = restricted_mcp()
+        payload = with_risk_evidence({
+            "client_id": "client_alpha",
+            "supplier_id": "supplier_123",
+            "amount_minor": 1_500_00,
+            "currency": "SEK",
+        })
+        permit, _, _, _ = issue_permit(
+            action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+            case_id="case_cross_entity",
+            payload=payload,
+            permit_id="permit_cross_entity",
+        )
+
+        with self.assertRaisesRegex(RestrictedToolPermitError, "entity_id"):
+            mcp.call_tool(
+                "fortnox_prepare_supplier_invoice_draft",
+                {**payload, "entity_id": "different-entity"},
+                case_id="case_cross_entity",
+                permit=permit,
+            )
+
     def test_approval_and_delete_examples_are_forbidden_even_with_permit_attempts(self) -> None:
         mcp = restricted_mcp()
         approval_payload = {
@@ -294,6 +324,7 @@ class RestrictedFortnoxToolTests(unittest.TestCase):
             PolicyContext(
                 action_type=ActionType.APPROVE_SUPPLIER_INVOICE,
                 client_id="client_alpha",
+                currency_code="SEK",
             )
         )
 

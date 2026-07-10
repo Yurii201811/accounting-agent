@@ -1,20 +1,38 @@
 from __future__ import annotations
 
 import json
+import io
 import re
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from importlib import resources
 from pathlib import Path
 
+from accounting_agent.cli import main as cli_main
 from accounting_agent.operations_cockpit import (
     build_operations_cockpit,
+    build_public_preview,
     collect_operations_cockpit_data,
     verify_generated_links,
 )
 
 
 class OperationsCockpitTests(unittest.TestCase):
+    def test_cli_reports_out_of_root_build_error_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for command in ("build-operations-cockpit", "build-public-preview"):
+                with self.subTest(command=command):
+                    stderr = io.StringIO()
+                    with redirect_stderr(stderr):
+                        result = cli_main(
+                            [command, "--output", str(Path(temp_dir) / command)]
+                        )
+
+                    self.assertEqual(1, result)
+                    self.assertIn("must stay under repo root", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_packaged_tokens_are_available_for_clean_installs(self) -> None:
         packaged = resources.files("accounting_agent").joinpath("static", "tokens.css")
         packaged_icon = resources.files("accounting_agent").joinpath("static", "favicon.svg")
@@ -59,7 +77,7 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertEqual(1, queues["changed_bank_details"])
             self.assertEqual(1, queues["uncertain_vat"])
             self.assertEqual(1, queues["policy_alignment_warnings"])
-            self.assertIn("Accounting Agent Operations Cockpit", html)
+            self.assertIn("Accounting Agent v1", html)
             self.assertIn("Observe and review only", html)
             self.assertIn("python3 -m accounting_agent.cli build-operations-cockpit", html)
             self.assertIn("Fortnox dry-run", html)
@@ -73,6 +91,18 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertIn("Supervised computer use", html)
             self.assertIn("Bounded specialist-agent pipeline", html)
             self.assertIn("Agents never self-approve", html)
+            self.assertIn('id="setup"', html)
+            self.assertIn('id="close"', html)
+            self.assertIn('id="automation"', html)
+            self.assertIn("Evidence completeness", html)
+            self.assertIn("Assemble review packet", html)
+            self.assertIn("Ollama on this device", html)
+            self.assertIn("Anthropic API", html)
+            self.assertIn("Google Gemini API", html)
+            self.assertIn("The agent prepares. People decide.", html)
+            self.assertIn('data-sv="Manifest för testkund"', html)
+            self.assertIn('data-sv="full syntetisk månadskörning"', html)
+            self.assertIn('data-sv="senaste lokala filen"', html)
             self.assertEqual(5, html.count('class="attention-row"'))
             self.assertNotIn("more items not shown", html)
             self.assertNotIn(str(root), html)
@@ -82,14 +112,33 @@ class OperationsCockpitTests(unittest.TestCase):
             tokens = (root / "tokens.css").read_text(encoding="utf-8")
             self.assertTrue(
                 tokens.startswith(
-                    "/* Hallmark · macrostructure: Workbench · tone: calm precise operational · anchor hue: cobalt */"
+                    "/* Hallmark · genre: modern-minimal · macrostructure: Narrative Workflow · theme: Coral"
                 )
             )
             page_css = re.search(r"<style>\s*(.*?)\s*</style>", html, re.DOTALL)
             self.assertIsNotNone(page_css)
             assert page_css is not None
-            self.assertTrue(page_css.group(1).startswith("/* Hallmark · macrostructure: Workbench"))
+            self.assertTrue(
+                page_css.group(1).startswith(
+                    "/* Hallmark · genre: modern-minimal · macrostructure: Narrative Workflow"
+                )
+            )
             self.assertIsNone(re.search(r"#[0-9a-f]{3,8}|(?:rgb|hsl|oklch)\(", page_css.group(1), re.IGNORECASE))
+            self.assertNotIn("@media (max-width", page_css.group(1))
+            self.assertIn("@media (min-width: 40rem)", page_css.group(1))
+            self.assertIn("@media (hover: hover) and (pointer: fine)", page_css.group(1))
+            self.assertRegex(
+                page_css.group(1),
+                r"\.wordmark \{\s*display: inline-flex;\s*min-width: 2\.75rem;\s*min-height: 2\.75rem;",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"\.section-nav a \{\s*display: inline-flex;\s*flex: 0 0 auto;\s*min-width: 2\.75rem;\s*min-height: 2\.75rem;",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"\.attention-copy details summary \{[^}]*min-height: 2\.75rem;",
+            )
             _assert_offline_local_only(self, html)
 
     def test_missing_artifacts_build_with_empty_states_and_no_dead_links(self) -> None:
@@ -109,6 +158,10 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertEqual("not_ready_no_fake_client_run", result.data.local_readiness)
             self.assertEqual("not_ready_no_demo_run", result.data.demo_readiness)
             self.assertIn("No current items found in local artifacts.", html)
+            self.assertIn(
+                'data-sv="Inga lokala SQLite-köantal har hittats ännu."',
+                html,
+            )
             self.assertEqual([], verify_generated_links(result.output_path, root))
             self.assertNotIn(str(root), html)
             _assert_offline_local_only(self, html)
@@ -139,6 +192,82 @@ class OperationsCockpitTests(unittest.TestCase):
             data = collect_operations_cockpit_data(repo_root=root)
             self.assertEqual({}, data.queue_counts)
             self.assertFalse((root / ".local" / "accounting_agent.sqlite").exists())
+
+    def test_public_preview_is_self_contained_and_synthetic_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            private = root / ".local" / "fake_client_dry_run"
+            private.mkdir(parents=True)
+            (private / "SECRET_VALUE.json").write_text(
+                '{"client": "REAL-CLIENT-NAME"}', encoding="utf-8"
+            )
+
+            result = build_public_preview(repo_root=root, output_dir="dist/preview")
+            bundle = result.output_path.parent
+            markup = result.output_path.read_text(encoding="utf-8")
+            manifest = json.loads(
+                (bundle / "preview-manifest.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual((), result.broken_links)
+            self.assertEqual([], verify_generated_links(result.output_path, bundle))
+            self.assertEqual(
+                {
+                    "LICENSE.lucide.txt",
+                    "favicon.svg",
+                    "index.html",
+                    "preview-manifest.json",
+                    "tokens.css",
+                },
+                {path.name for path in bundle.iterdir() if path.is_file()},
+            )
+            self.assertTrue(manifest["synthetic_data_only"])
+            self.assertEqual(0, manifest["source_artifact_links"])
+            self.assertEqual(
+                {
+                    "reads_local_workflow_artifacts": False,
+                    "network_invocation_available": False,
+                    "hosted_model_invocation_available": False,
+                    "erp_write_invocation_available": False,
+                },
+                manifest["build_contract"],
+            )
+            self.assertIn("SYN-INV-003", markup)
+            for marker in (
+                str(root),
+                "SECRET_VALUE",
+                "REAL-CLIENT-NAME",
+                ".local/",
+                "Downloads/",
+                "kursstart",
+                "e427o-bokforing2",
+                "e428o-bokforing3",
+            ):
+                self.assertNotIn(marker, markup)
+            _assert_offline_local_only(self, markup)
+
+    def test_public_preview_refuses_unexpected_files_in_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "dist" / "preview"
+            target.mkdir(parents=True)
+            (target / "private-notes.txt").write_text("do not deploy", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unexpected files"):
+                build_public_preview(repo_root=root, output_dir="dist/preview")
+
+    def test_public_preview_refuses_allowed_name_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "dist" / "preview"
+            target.mkdir(parents=True)
+            outside = root / "outside.css"
+            outside.write_text("must not be overwritten", encoding="utf-8")
+            (target / "tokens.css").symlink_to(outside)
+
+            with self.assertRaisesRegex(ValueError, "unexpected files"):
+                build_public_preview(repo_root=root, output_dir="dist/preview")
+            self.assertEqual("must not be overwritten", outside.read_text(encoding="utf-8"))
 
 
 def _write_cockpit_fixture(root: Path) -> None:

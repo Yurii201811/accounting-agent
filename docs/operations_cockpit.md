@@ -1,7 +1,7 @@
 # Operations Cockpit
 
-The operations cockpit is a read-only static dashboard for the local Accounting
-Agent MVP. It gives the operator one place to inspect workflow state, safety
+The operations cockpit is a read-only static workspace for Accounting Agent v1.
+It gives the operator one place to inspect workflow state, safety
 boundaries, review queues, local output artifacts, and safe next commands.
 
 Build it with:
@@ -38,11 +38,16 @@ external systems. It does not initialize or mutate the SQLite database.
   counters. A non-zero live counter is rendered as a safety violation.
 - Review: one deduplicated row per case, sorted by the strictest stop condition,
   with search and priority filtering. No queue is truncated.
-- Workflow: deterministic accounting stages and the bounded specialist-agent
-  plan, ending at a human decision gate.
+- Close: dependency-aware evidence, reconciliation, exception, policy, and
+  independent-signoff controls.
+- Automation: a resumable preparation ladder and advisory model-routing
+  boundary.
 - Integrations: capability declarations generated from the provider registry
-  for Fortnox, NetSuite, Oracle Fusion, SAP S/4HANA, generic exchange, and
-  supervised observation-only computer use.
+  for Fortnox, NetSuite, Oracle Fusion, SAP S/4HANA, Odoo, SIE, CSV, and
+  supervised observation-only computer use. Only the guarded Fortnox read
+  contract has a preview implementation; the others are declarations.
+- How it works: deterministic accounting stages and the bounded specialist-
+  agent plan, ending at a human decision gate.
 - Controls and evidence: policy boundaries, grouped local artifacts, and expert
   details without leaking the local workspace path.
 
@@ -59,6 +64,21 @@ state offers a local clear-filters action.
 The stylesheet is bundled as package data and copied locally when a clean
 installation builds a cockpit. The page remains offline and contains no CDN,
 remote font, or runtime asset dependency.
+
+## Deployable synthetic preview
+
+Do not deploy `reports/operations_cockpit/index.html`: it may link to local
+generated evidence. Build the isolated bundle instead:
+
+```bash
+python3 -m accounting_agent.cli build-public-preview \
+  --output .local/accounting-agent-v1-preview
+```
+
+This builder never reads local case artifacts. It renders three built-in
+synthetic review examples, copies only the packaged stylesheet/icon/license,
+emits `preview-manifest.json` with file hashes and explicit disabled builder
+capabilities, and refuses to reuse a target containing any unexpected file.
 
 ## Safety contract
 
