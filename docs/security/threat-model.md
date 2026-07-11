@@ -10,8 +10,9 @@ cloud controls are assumptions and requirements, not existing mitigations.
 
 The current public core is a Python library and nine-command local CLI. Its
 runtime surfaces are synthetic fixture intake, deterministic accounting and
-risk rules, local SQLite stores, append-oriented evidence, guarded Fortnox
-reads, a loopback-only local-model adapter, and generated static cockpit
+risk rules, immutable tenant/document/archive contracts, an atomic durable
+execution-attempt store, local SQLite stores, append-oriented evidence, guarded
+Fortnox reads, a loopback-only local-model adapter, and generated static cockpit
 artifacts. It has no HTTP application, identity provider, multi-tenant cloud
 database, managed archive, production secrets broker, or authorized external
 write. The highest-value current assets are accounting integrity, tenant/client
@@ -72,11 +73,15 @@ review before any real-client byte is accepted.
    expiry and append-only permit IDs make later mutation detectable. Local JSON,
    JSONL and SQLite remain operator-writable and are not a certified immutable
    archive or independent audit anchor.
-6. **Presentation boundary.** The generated cockpit and public preview render
+6. **Durable attempt boundary.** `execution_attempts.py` atomically binds one
+   idempotency key to permit, client, entity, case, provider, action and payload.
+   Completed and ambiguous outcomes are immutable; ambiguity cannot auto-retry.
+   This records authority and observations but performs no provider call.
+7. **Presentation boundary.** The generated cockpit and public preview render
    synthetic or local artifacts. They must not turn attacker-controlled text
    into active HTML, load unexpected network resources, disclose local paths,
    or imply that navigation or role perspective changes authority.
-7. **Release boundary.** Source archives, wheels, CI actions, npm packages and
+8. **Release boundary.** Source archives, wheels, CI actions, npm packages and
    deployment artifacts cross from development into user environments. The
    provenance scan, locked dependencies, reproducible builds, secret scanning,
    package inspection and signed-release plan reduce but do not eliminate this
@@ -170,8 +175,9 @@ unexpected-instruction changes stop the task.
 
 SQLite corruption, lock races, truncated writes, stale leases and process
 crashes can duplicate or lose decisions. Transactions, uniqueness constraints,
-schema/version checks, leases, integrity tests and explicit recovery paths are
-current mitigations. Local files are not an immutable archive. Production must
+schema/version checks, leases, exact-scope execution reservations, immutable
+terminal states, integrity tests and explicit recovery paths are current
+mitigations. Local files are not an immutable archive. Production must
 add PostgreSQL isolation/RLS, transactional outbox semantics, encrypted backups,
 independent restore checks, WORM archive storage and externally anchored audit
 roots.
@@ -252,7 +258,7 @@ failure, and no security boundary or accounting decision changes.
 - Notes: A repository document is not independent security assurance.
 
 Repository: sha256:e7c461de6f8bfd676a7ecb697b004d84d3f30b82258754fd278098a92a1ce766
-Version: 0d0870d2f22d27c54450ead62f61998696cc9b41
+Version: 89849228039a3590a9962b20be88452befc76b19
 
 ## Regeneration policy
 

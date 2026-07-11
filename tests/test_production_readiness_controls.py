@@ -155,6 +155,22 @@ class ProductionReadinessControlTests(unittest.TestCase):
             {gate["id"] for gate in report["gates"] if gate["status"] == "pending"},
         )
 
+    def test_runtime_surface_change_invalidates_the_threat_model(self) -> None:
+        with tempfile.TemporaryDirectory(
+            dir=ROOT / "accounting_agent",
+            prefix=".qa-runtime-drift-",
+        ) as directory:
+            (Path(directory) / "new_runtime.py").write_text(
+                "# synthetic unreviewed runtime surface\n",
+                encoding="utf-8",
+            )
+            result = _run_readiness("--json")
+
+        self.assertEqual(1, result.returncode)
+        report = json.loads(result.stdout)
+        self.assertEqual("invalid", report["status"])
+        self.assertIn("threat model is stale", " ".join(report["errors"]).casefold())
+
     def test_catalog_cannot_self_attest_a_gate_as_verified(self) -> None:
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
         catalog["gates"][0]["initial_status"] = "verified"

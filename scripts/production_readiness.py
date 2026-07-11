@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -26,7 +27,20 @@ EXPECTED_DOCUMENT_STATUS = "PRELIMINARY — NOT APPROVED"
 EXPECTED_REPOSITORY_TARGET = (
     "sha256:e7c461de6f8bfd676a7ecb697b004d84d3f30b82258754fd278098a92a1ce766"
 )
-EXPECTED_REVIEWED_REVISION = "0d0870d2f22d27c54450ead62f61998696cc9b41"
+EXPECTED_REVIEWED_REVISION = "89849228039a3590a9962b20be88452befc76b19"
+REVIEW_SENSITIVE_PREFIXES = ("accounting_agent/", ".github/workflows/", "scripts/")
+REVIEW_SENSITIVE_FILES = {
+    "MANIFEST.in",
+    "package-lock.json",
+    "package.json",
+    "playwright.config.ts",
+    "pyproject.toml",
+    "tokens.css",
+    "uv.lock",
+}
+REVIEW_REFRESH_FILES = {
+    "scripts/production_readiness.py",
+}
 TOP_LEVEL_KEYS = {
     "schema_version",
     "gate_set",
@@ -177,6 +191,39 @@ def _threat_model_binding_errors(content: str) -> list[str]:
     if "## Regeneration policy" not in content:
         errors.append("threat model must define its regeneration policy")
     return errors
+
+
+def _runtime_drift_errors(root: Path) -> list[str]:
+    if not (root / ".git").exists():
+        return []
+    commands = (
+        ("git", "diff", "--name-only", EXPECTED_REVIEWED_REVISION, "--"),
+        ("git", "ls-files", "--others", "--exclude-standard"),
+    )
+    changed_paths: set[str] = set()
+    for command in commands:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            return ["threat-model runtime drift could not be evaluated safely"]
+        changed_paths.update(line.strip() for line in completed.stdout.splitlines() if line.strip())
+    sensitive = sorted(
+        path
+        for path in changed_paths
+        if path not in REVIEW_REFRESH_FILES
+        and (
+            path in REVIEW_SENSITIVE_FILES
+            or any(path.startswith(prefix) for prefix in REVIEW_SENSITIVE_PREFIXES)
+        )
+    )
+    if not sensitive:
+        return []
+    return ["threat model is stale for reviewed runtime path(s): " + ", ".join(sensitive)]
 
 
 def _sha256(path: Path) -> str:
@@ -368,6 +415,7 @@ def evaluate_readiness(root: Path, catalog_path: Path) -> dict[str, Any]:
 
     if catalog is not None:
         errors.extend(_validate_catalog(catalog))
+        errors.extend(_runtime_drift_errors(root.resolve()))
         documents = catalog.get("required_control_documents", [])
         if isinstance(documents, list):
             for relative_path in documents:
