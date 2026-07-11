@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal, Sequence
@@ -33,13 +35,66 @@ _SOURCE_LOCAL_PATH_RE = re.compile(
     r"(?:^|[\\/])Downloads[\\/]|[A-Za-z]:\\Users\\",
     re.IGNORECASE | re.MULTILINE,
 )
-_PROVENANCE_SOURCE_EXTENSIONS = frozenset({".md", ".py", ".toml", ".yaml", ".yml"})
-_PROVENANCE_SCAN_EXEMPTIONS = frozenset(
+_WEB_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_PROVENANCE_SOURCE_EXTENSIONS = frozenset(
     {
-        "accounting_agent/operations_cockpit.py",
-        "scripts/evidence_privacy.py",
-        "scripts/fixture_policy.py",
+        ".css",
+        ".example",
+        ".html",
+        ".json",
+        ".lock",
+        ".md",
+        ".py",
+        ".svg",
+        ".toml",
+        ".ts",
+        ".txt",
+        ".yaml",
+        ".yml",
     }
+)
+_PROVENANCE_SOURCE_NAMES = frozenset(
+    {".gitignore", "CODEOWNERS", "LICENSE", "MANIFEST.in", "NOTICE"}
+)
+_DETECTOR_ASSIGNMENTS = {
+    "accounting_agent/operations_cockpit.py": frozenset({"forbidden_markers"}),
+    "scripts/evidence_privacy.py": frozenset({"_MAC_LINUX_HOME", "_WINDOWS_HOME"}),
+    "scripts/fixture_policy.py": frozenset(
+        {
+            "_DETECTOR_LITERALS",
+            "_LOCAL_PATH_RE",
+            "_PRIVATE_COURSE_RE",
+            "_SOURCE_LOCAL_PATH_RE",
+        }
+    ),
+}
+_DETECTOR_LITERALS = {
+    "tests/test_fixture_policy.py": frozenset(
+        {
+            "Synthetic fixture from /Users/example/Downloads/invoice.txt\n",
+            "Synthetic fixture copied from kursstart.se\n",
+            "Open file:///Users/example/private.json",
+        }
+    ),
+    "tests/test_evidence_privacy.py": frozenset(
+        {
+            "/Users/private-accountant/Documents/Accounting Agent",
+            "/Users/private-accountant",
+            '{"path":"/Users/another-person/project/file.py",'
+            '"windows":"C:\\\\Users\\\\someone\\\\project"}',
+            "/Users/another-person",
+            "C:\\Users\\someone",
+        }
+    ),
+    "tests/test_operations_cockpit.py": frozenset(
+        {"Downloads/", "e427o-bokforing2", "e428o-bokforing3"}
+    ),
+}
+_DEDICATED_RESOURCE_PATHS = frozenset({"favicon.svg", "tokens.css"})
+_DEDICATED_RESOURCE_PREFIXES = (
+    "accounting_agent/fixtures/",
+    "accounting_agent/static/",
+    "fixtures/",
 )
 _CREDENTIAL_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -222,31 +277,97 @@ def scan_resources(
     )
 
 
+def _manifest_publishable_inputs(repo_root: Path) -> list[Path]:
+    """Return package source and MANIFEST-declared publishable paths."""
+
+    manifest = repo_root / "MANIFEST.in"
+    inputs = [repo_root / "accounting_agent", repo_root / "pyproject.toml", manifest]
+    if not manifest.is_file():
+        inputs.extend((repo_root / "docs", repo_root / "scripts"))
+        inputs.extend(sorted(repo_root.glob("*.md")))
+        return inputs
+
+    for raw_line in manifest.read_text(encoding="utf-8").splitlines():
+        try:
+            tokens = shlex.split(raw_line, comments=True)
+        except ValueError:
+            continue
+        if not tokens:
+            continue
+        directive, *arguments = tokens
+        if directive == "include":
+            for pattern in arguments:
+                matches = sorted(repo_root.glob(pattern))
+                inputs.extend(matches or [repo_root / pattern])
+        elif directive in {"graft", "recursive-include"} and arguments:
+            inputs.append(repo_root / arguments[0])
+    return inputs
+
+
+def _assigned_names(node: ast.Assign | ast.AnnAssign) -> set[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    return {target.id for target in targets if isinstance(target, ast.Name)}
+
+
+def _mask_detector_assignments(display_path: str, text: str) -> str:
+    """Mask exact detector assignments/literals, never their whole files."""
+
+    allowed_names = _DETECTOR_ASSIGNMENTS.get(display_path, frozenset())
+    allowed_literals = _DETECTOR_LITERALS.get(display_path, frozenset())
+    if not allowed_names and not allowed_literals:
+        return text
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+
+    line_offsets = [0]
+    for line in text.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+    spans: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        should_mask = (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and bool(_assigned_names(node) & allowed_names)
+        ) or (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in allowed_literals
+        )
+        if not should_mask or node.end_lineno is None or node.end_col_offset is None:
+            continue
+        start = line_offsets[node.lineno - 1] + node.col_offset
+        end = line_offsets[node.end_lineno - 1] + node.end_col_offset
+        spans.append((start, end))
+
+    masked = list(text)
+    for start, end in spans:
+        for index in range(start, end):
+            if masked[index] not in "\r\n":
+                masked[index] = " "
+    return "".join(masked)
+
+
 def _scan_provenance_sources(repo_root: Path, *, max_bytes: int) -> ScanReport:
     """Scan publishable docs and Python source for private provenance markers."""
 
-    inputs = [
-        path
-        for path in (repo_root / "accounting_agent", repo_root / "docs", repo_root / "scripts")
-        if path.exists() or path.is_symlink()
-    ]
-    inputs.extend(sorted(repo_root.glob("*.md")))
-    pyproject = repo_root / "pyproject.toml"
-    if pyproject.exists() or pyproject.is_symlink():
-        inputs.append(pyproject)
-
     findings: list[Finding] = []
     files_scanned = 0
-    for path in _iter_resource_paths(inputs):
+    for path in _iter_resource_paths(_manifest_publishable_inputs(repo_root)):
         display_path = _display_path(path, repo_root)
-        if display_path in _PROVENANCE_SCAN_EXEMPTIONS:
+        if display_path in _DEDICATED_RESOURCE_PATHS or display_path.startswith(
+            _DEDICATED_RESOURCE_PREFIXES
+        ):
             continue
         if path.is_symlink():
             findings.append(
                 Finding("symlink_forbidden", display_path, "Publishable source must be a regular file.")
             )
             continue
-        if not path.is_file() or path.suffix.lower() not in _PROVENANCE_SOURCE_EXTENSIONS:
+        if not path.is_file() or (
+            path.suffix.lower() not in _PROVENANCE_SOURCE_EXTENSIONS
+            and path.name not in _PROVENANCE_SOURCE_NAMES
+        ):
             continue
         files_scanned += 1
         if path.stat().st_size > max_bytes:
@@ -265,7 +386,9 @@ def _scan_provenance_sources(repo_root: Path, *, max_bytes: int) -> ScanReport:
                 Finding("non_utf8_resource", display_path, "Publishable source must be UTF-8 text.")
             )
             continue
-        if _SOURCE_LOCAL_PATH_RE.search(text):
+        text = _mask_detector_assignments(display_path, text)
+        without_web_urls = _WEB_URL_RE.sub("", text)
+        if _SOURCE_LOCAL_PATH_RE.search(without_web_urls):
             findings.append(
                 Finding(
                     "local_path_marker",
