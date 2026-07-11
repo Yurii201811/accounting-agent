@@ -17,7 +17,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Final
+from typing import Any, Callable, Final
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
@@ -48,7 +48,8 @@ class DataClassification(str, Enum):
     CONFIDENTIAL_ACCOUNTING = "confidential_accounting"
     PERSONAL_DATA = "personal_data"
     PRIVATE_COURSE = "private_course_material"
-    CREDENTIAL_OR_SECRET = "credential_or_secret"
+    # This is a classification label, never a credential value.
+    CREDENTIAL_OR_SECRET = "credential_or_secret"  # nosec B105
 
 
 class ModelPurpose(str, Enum):
@@ -371,7 +372,7 @@ def local_model_endpoint(endpoint: str) -> str:
     return f"http://{rendered_host}{rendered_port}"
 
 
-_OllamaOpener = Callable[..., object]
+_OllamaOpener = Callable[..., Any]
 
 
 class _RejectRedirects(HTTPRedirectHandler):
@@ -379,7 +380,7 @@ class _RejectRedirects(HTTPRedirectHandler):
         raise OSError("loopback redirect blocked")
 
 
-def _open_loopback_only(request: Request, *, timeout: float) -> object:
+def _open_loopback_only(request: Request, *, timeout: float) -> Any:
     opener = build_opener(ProxyHandler({}), _RejectRedirects())
     return opener.open(request, timeout=timeout)
 
@@ -422,6 +423,8 @@ def discover_ollama(
                 raise ValueError("Ollama model entry must be an object")
             name = raw_model.get("name")
             size = raw_model.get("size")
+            if not isinstance(name, str):
+                raise ValueError("Ollama model name must be a string")
             model = OllamaModel(name=name, size_bytes=size)
             models_by_name[model.name] = model
         models = tuple(models_by_name[name] for name in sorted(models_by_name))

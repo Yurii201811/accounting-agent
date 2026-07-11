@@ -21,7 +21,6 @@ from accounting_agent.connector_contract import (
     ConnectorEnvironment,
     ConnectorGuard,
     ConnectorHealth,
-    ConnectorManifest,
     ConnectorPage,
     ConnectorReadRequest,
     ConnectorWriteForbidden,

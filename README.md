@@ -84,11 +84,71 @@ Run the lower-level sample pipeline:
 python3 -m accounting_agent.cli process-fixtures
 ```
 
+Supplier, bank-reconciliation, and local Microsoft 365 sample fixtures are
+packaged with the application, so their default commands also work from a
+clean installation outside the source checkout. Passing an empty, missing, or
+incomplete fixture folder fails with a nonzero exit code and an actionable
+message; it never reports a zero-item run as successful.
+
 Run tests:
 
 ```bash
 python3 -m unittest
 ```
+
+Install the locked QA tools and run the v1 gates:
+
+```bash
+uv sync --frozen --group qa
+npm ci
+npx playwright install chromium firefox webkit
+uv run --frozen --group qa python scripts/qa.py quick
+uv run --frozen --group qa python scripts/qa.py full
+```
+
+The full gate adds subprocess-aware branch coverage, property and resilience
+tests, Ruff, mypy, Bandit, dependency and credential-leak scans, privacy checks,
+targeted safety mutation testing, and the Chromium/Firefox/WebKit Playwright +
+axe matrix. Evidence is written below `.local/qa/runs/<UTC-run-id>/`.
+
+`release` rebuilds the exact five-file public preview with a fixed source-date
+epoch and requires its public `*.vercel.app` HTTPS deployment URL, then proves deterministic
+wheel/sdist hashes, clean-installed behavior for all nine commands, preview
+privacy, and deployed artifact equality. It never enables or tests a live ERP
+write:
+
+```bash
+ACCOUNTING_AGENT_PREVIEW_URL=https://your-preview.vercel.app \
+uv run --frozen --group qa python scripts/qa.py release
+```
+
+The command writes a revision- and bundle-bound manual VoiceOver template under
+the run's `accessibility/` directory. Until a human completes that checklist,
+the automated steps may pass but `release_ready` remains false and the command
+exits `2`. A dirty worktree or mismatched preview hash can never be reported as
+release-ready.
+
+After completing the checklist against the exact deployed bundle, start a new
+evidence run and pass the prior attestation explicitly:
+
+```bash
+ACCOUNTING_AGENT_PREVIEW_URL=https://your-preview.vercel.app \
+uv run --frozen --group qa python scripts/qa.py release \
+  --manual-accessibility-evidence \
+  .local/qa/runs/<prior-run-id>/accessibility/manual-voiceover.md
+```
+
+Release mode always rebuilds and verifies
+`.local/accounting-agent-v1-preview-release`; an alternate bundle environment
+value cannot redirect the release proof. Both summary and attestation inputs are confined to regular, non-symlinked
+paths below `.local/qa/runs/`. The runner samples Git revision and cleanliness
+before and after all gates and rejects drift visible at either boundary. Run
+release QA in its dedicated worktree and do not commit, check out, or edit
+concurrently; endpoint sampling is not an immutable filesystem snapshot.
+
+Release source archives include the tests, helpers, synthetic source fixtures,
+QA traceability and coverage catalogs, workflow specification, and QA runner
+needed to validate the archive on its own.
 
 Fixture commands use an explicit 2026-05-16 evaluation date by default so risk
 outcomes do not change with the wall clock. Pass `--as-of YYYY-MM-DD` to the

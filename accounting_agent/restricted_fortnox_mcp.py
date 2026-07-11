@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from .external_writes import FortnoxWriteAdapter
-from .permits import ExecutionPermit, PermitValidationError, canonical_payload_hash
+from .permits import ExecutionPermit, canonical_payload_hash
 from .policy import ActionType, PermissionMode, PolicyContext, evaluate_policy
 
 

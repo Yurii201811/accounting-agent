@@ -13,10 +13,112 @@ dependencies = []
 accounting-agent = "accounting_agent.cli:main"
 
 [tool.setuptools.package-data]
-accounting_agent = ["static/*.css", "static/*.svg", "static/*.txt"]
+accounting_agent = [
+  "static/*.css",
+  "static/*.svg",
+  "static/*.txt",
+  "fixtures/supplier_invoices/*.json",
+  "fixtures/bank_reconciliation/*.json",
+  "fixtures/microsoft365_intake/*.txt",
+]
 
 [tool.setuptools.packages.find]
 include = ["accounting_agent*"]
 
 [tool.unittest]
 start-dir = "tests"
+
+[dependency-groups]
+qa = [
+    "bandit[toml]>=1.9.4",
+    "build>=1.5.1",
+    "check-wheel-contents>=0.6.3",
+    "coverage[toml]>=7.15.0",
+    "hypothesis>=6.156.6",
+    "mutmut>=3.6.0",
+    "mypy>=2.2.0",
+    "pip-audit>=2.10.1",
+    "pytest>=9.1.1",
+    "pytest-socket>=0.8.0",
+    "ruff>=0.15.21",
+    "setuptools>=68",
+    "twine>=6.2.0",
+]
+
+[tool.coverage.run]
+branch = true
+concurrency = ["multiprocessing", "thread"]
+parallel = true
+patch = ["subprocess"]
+relative_files = true
+source = ["accounting_agent"]
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+]
+fail_under = 85
+precision = 2
+show_missing = true
+skip_covered = true
+
+[tool.coverage.html]
+show_contexts = true
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+testpaths = ["tests"]
+
+[tool.ruff]
+exclude = [
+  ".git",
+  ".local",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".venv",
+  "build",
+  "dist",
+  "node_modules",
+  "playwright-report",
+  "test-results",
+]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+check_untyped_defs = true
+files = ["accounting_agent"]
+no_implicit_optional = true
+pretty = true
+python_version = "3.11"
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[tool.bandit]
+exclude_dirs = [".local", ".venv", "build", "dist", "tests"]
+
+[tool.mutmut]
+source_paths = ["accounting_agent"]
+only_mutate = [
+  "accounting_agent/policy.py",
+  "accounting_agent/permits.py",
+  "accounting_agent/adapters/fortnox.py",
+]
+pytest_add_cli_args = ["-q", "--disable-warnings", "--disable-socket"]
+pytest_add_cli_args_test_selection = [
+  "tests/test_policy_and_permits.py",
+  "tests/test_permit_approval_bridge_v1.py",
+  "tests/test_fortnox_adapter.py",
+  "tests/test_safety_branch_model_fortnox_policy.py",
+  "tests/test_safety_branch_permit_approval_evidence.py",
+]
+mutate_only_covered_lines = false
+timeout_multiplier = 3.0
+timeout_constant = 2.0

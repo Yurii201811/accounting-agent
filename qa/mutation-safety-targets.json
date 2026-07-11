@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_61",
+      "safety_boundary": "External writes with incomplete risk evidence cannot bypass review."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_76",
+      "safety_boundary": "An unconfigured currency threshold cannot be treated as configured."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_91",
+      "safety_boundary": "A destructive flag independently forces a forbidden decision."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_93",
+      "safety_boundary": "Destructive and settings actions are assigned forbidden mode."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_98",
+      "safety_boundary": "External writes in a locked period are assigned forbidden mode."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_103",
+      "safety_boundary": "The explicit tax-filing action independently requires client-responsible review even when the redundant context flag is omitted."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_120",
+      "safety_boundary": "A changed-bank-details signal independently escalates for security review."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_139",
+      "safety_boundary": "The escalation amount boundary is inclusive."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_149",
+      "safety_boundary": "High-value escalation retains the accountant review role."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_193",
+      "safety_boundary": "The duplicate-risk review boundary is inclusive."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_194",
+      "safety_boundary": "Duplicate risk actually tightens the permission mode."
+    },
+    {
+      "metadata_file": "accounting_agent/policy.py.meta",
+      "mutant_id": "accounting_agent.policy.x_evaluate_policy__mutmut_206",
+      "safety_boundary": "VAT uncertainty actually tightens the permission mode."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_1",
+      "safety_boundary": "Forbidden policy decisions cannot receive a permit."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_35",
+      "safety_boundary": "A reviewed permit requires both an authority and an approval request."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_60",
+      "safety_boundary": "An empty approval decision set independently blocks issuance."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_61",
+      "safety_boundary": "A missing approval role independently blocks issuance."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_62",
+      "safety_boundary": "An approval request-digest mismatch independently blocks issuance."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_63",
+      "safety_boundary": "An approval binding-digest mismatch independently blocks issuance."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_64",
+      "safety_boundary": "An approval request-ID mismatch independently blocks issuance."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitIssuerǁissue__mutmut_65",
+      "safety_boundary": "An invalid authority verdict independently blocks issuance."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitValidatorǁrequire_valid__mutmut_111",
+      "safety_boundary": "Decision-ID drift and verification errors each invalidate a permit."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitValidatorǁrequire_valid__mutmut_112",
+      "safety_boundary": "Missing roles and decision-ID drift each invalidate revalidation."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitValidatorǁrequire_valid__mutmut_113",
+      "safety_boundary": "Request-digest drift and missing roles each invalidate revalidation."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitValidatorǁrequire_valid__mutmut_114",
+      "safety_boundary": "Binding and request digest drift each invalidate revalidation."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitValidatorǁrequire_valid__mutmut_115",
+      "safety_boundary": "Request-ID and binding drift each invalidate revalidation."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁPermitValidatorǁrequire_valid__mutmut_116",
+      "safety_boundary": "An invalid authority verdict independently invalidates revalidation."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁInMemoryPermitStoreǁsave__mutmut_3",
+      "safety_boundary": "In-memory permit IDs are append-only and reject duplicates."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁInMemoryPermitStoreǁsave__mutmut_7",
+      "safety_boundary": "The immutable in-memory permit record is persisted unchanged."
+    },
+    {
+      "metadata_file": "accounting_agent/permits.py.meta",
+      "mutant_id": "accounting_agent.permits.xǁSQLitePermitStoreǁsave__mutmut_35",
+      "safety_boundary": "SQLite duplicate permit IDs fail closed as immutable conflicts."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁHttpFortnoxTransportǁ_request__mutmut_2",
+      "safety_boundary": "The Fortnox HTTP transport accepts GET only."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁHttpFortnoxTransportǁ_request__mutmut_60",
+      "safety_boundary": "Fortnox reads always retain a bounded timeout."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁHttpFortnoxTransportǁ_request__mutmut_64",
+      "safety_boundary": "Fortnox response reads remain explicitly bounded."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁHttpFortnoxTransportǁ_request__mutmut_66",
+      "safety_boundary": "The Fortnox response probe cannot exceed the hard limit by more than one byte."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.x__open_fortnox_read__mutmut_1",
+      "safety_boundary": "Fortnox reads use the no-proxy, no-redirect opener."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁ_RejectFortnoxRedirectsǁredirect_request__mutmut_1",
+      "safety_boundary": "Redirect responses fail closed."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.x__validated_fortnox_base_url__mutmut_21",
+      "safety_boundary": "A username or nonstandard port independently invalidates the Fortnox origin."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.x__assert_no_forbidden_payload_markers__mutmut_12",
+      "safety_boundary": "A truthy sent marker is forbidden in a draft payload."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁFortnoxAdapterǁ_create_draft__mutmut_2",
+      "safety_boundary": "Non-dry-run Fortnox draft creation remains structurally blocked."
+    },
+    {
+      "metadata_file": "accounting_agent/adapters/fortnox.py.meta",
+      "mutant_id": "accounting_agent.adapters.fortnox.xǁFortnoxAdapterǁ_raise_if_action_forbidden__mutmut_1",
+      "safety_boundary": "Forbidden live Fortnox actions cannot be inverted into allowed actions."
+    }
+  ]
+}

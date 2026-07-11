@@ -1,0 +1,20 @@
+include .gitignore
+include AGENTS.md
+include README.md
+include favicon.svg
+include package-lock.json
+include package.json
+include playwright.config.ts
+include tokens.css
+include uv.lock
+recursive-include .github *.yml *.yaml
+recursive-include accounting_agent/fixtures *.json *.txt
+recursive-include accounting_agent/static *.css *.svg *.txt
+recursive-include config *.example
+recursive-include docs *.md
+recursive-include fixtures *.json *.txt
+recursive-include qa *.json
+recursive-include reports *.html
+recursive-include scripts *.py
+recursive-include spec *.md
+recursive-include tests *.md *.py *.ts

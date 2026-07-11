@@ -199,8 +199,8 @@ def evaluate_period_close(
     facts_by_stage: dict[CloseStage, list[CloseFact]] = {
         stage: [] for stage in CLOSE_STAGE_ORDER
     }
-    for fact in snapshot.facts:
-        facts_by_stage[fact.stage].append(fact)
+    for snapshot_fact in snapshot.facts:
+        facts_by_stage[snapshot_fact.stage].append(snapshot_fact)
     snapshot_blockers: list[CloseBlocker] = []
     if verification is None:
         snapshot_blockers.append(

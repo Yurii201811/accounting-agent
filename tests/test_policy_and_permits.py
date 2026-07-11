@@ -134,16 +134,18 @@ class PolicyDecisionTests(unittest.TestCase):
     def test_changed_bank_details_escalate(self) -> None:
         decision = evaluate_policy(
             PolicyContext(
-                action_type=ActionType.UPDATE_SUPPLIER_BANK_DETAILS,
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
                 client_id="client_123",
                 currency_code="SEK",
                 bank_details_changed=True,
+                risk_evidence_complete=True,
             )
         )
 
         self.assertEqual(PermissionMode.ESCALATION_REQUIRED, decision.permission_mode)
         self.assertIn("senior_accountant_review", decision.required_reviews)
         self.assertIn("security_review", decision.required_reviews)
+        self.assertIn("bank_details_changed", decision.reasons)
 
     def test_large_amount_requires_approval(self) -> None:
         decision = evaluate_policy(
@@ -158,6 +160,24 @@ class PolicyDecisionTests(unittest.TestCase):
         self.assertEqual(PermissionMode.APPROVAL_REQUIRED, decision.permission_mode)
         self.assertIn("accountant_review", decision.required_reviews)
         self.assertIn("amount_exceeds_draft_threshold", decision.reasons)
+
+    def test_escalation_threshold_requires_both_accounting_reviews(self) -> None:
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+                client_id="client_123",
+                currency_code="SEK",
+                amount_minor=100_000_00,
+                risk_evidence_complete=True,
+            )
+        )
+
+        self.assertEqual(PermissionMode.ESCALATION_REQUIRED, decision.permission_mode)
+        self.assertEqual(
+            ("accountant_review", "senior_accountant_review"),
+            decision.required_reviews,
+        )
+        self.assertIn("amount_exceeds_escalation_threshold", decision.reasons)
 
     def test_unknown_supplier_requires_approval(self) -> None:
         decision = evaluate_policy(
@@ -198,10 +218,24 @@ class PolicyDecisionTests(unittest.TestCase):
         self.assertEqual(PermissionMode.APPROVAL_REQUIRED, decision.permission_mode)
         self.assertIn("duplicate_risk", decision.reasons)
 
+    def test_duplicate_review_threshold_is_inclusive(self) -> None:
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+                client_id="client_123",
+                currency_code="SEK",
+                duplicate_risk=0.50,
+                risk_evidence_complete=True,
+            )
+        )
+
+        self.assertEqual(PermissionMode.APPROVAL_REQUIRED, decision.permission_mode)
+        self.assertIn("duplicate_risk", decision.reasons)
+
     def test_destructive_action_is_forbidden(self) -> None:
         decision = evaluate_policy(
             PolicyContext(
-                action_type=ActionType.DELETE_RECORD,
+                action_type=ActionType.READ_ANALYSIS,
                 client_id="client_123",
                 currency_code="SEK",
                 destructive_action=True,
@@ -210,6 +244,22 @@ class PolicyDecisionTests(unittest.TestCase):
 
         self.assertEqual(PermissionMode.FORBIDDEN, decision.permission_mode)
         self.assertEqual((), decision.required_reviews)
+        self.assertIn("destructive_or_settings_action", decision.reasons)
+
+    def test_locked_period_blocks_an_external_draft(self) -> None:
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+                client_id="client_123",
+                currency_code="SEK",
+                period_locked=True,
+                risk_evidence_complete=True,
+            )
+        )
+
+        self.assertEqual(PermissionMode.FORBIDDEN, decision.permission_mode)
+        self.assertEqual((), decision.required_reviews)
+        self.assertIn("period_locked", decision.reasons)
 
     def test_payment_is_forbidden(self) -> None:
         decision = evaluate_policy(
@@ -248,6 +298,20 @@ class PolicyDecisionTests(unittest.TestCase):
         )
 
         self.assertEqual(PermissionMode.ESCALATION_REQUIRED, decision.permission_mode)
+        self.assertIn("client_responsible_review", decision.required_reviews)
+
+    def test_tax_filing_action_requires_client_review_without_redundant_flag(self) -> None:
+        decision = evaluate_policy(
+            PolicyContext(
+                action_type=ActionType.FILE_TAX_RETURN,
+                client_id="client_123",
+                currency_code="SEK",
+                tax_filing_payment=False,
+            )
+        )
+
+        self.assertEqual(PermissionMode.ESCALATION_REQUIRED, decision.permission_mode)
+        self.assertIn("tax_filing_or_payment", decision.reasons)
         self.assertIn("client_responsible_review", decision.required_reviews)
 
 

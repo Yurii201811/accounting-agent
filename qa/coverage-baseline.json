@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "measured_at": "2026-07-11T08:20:00Z",
+  "baseline_revision": "aed4507d0c59eeda1ec9ccfbdeffd8fb8c550522+qa-hardening",
+  "suite": "339 passed, 4 artifact-gated skips, 160 subtests",
+  "overall_line_percent": 90.492021,
+  "overall_branch_percent": 76.572188,
+  "overall_counts": {
+    "covered_lines": 6805,
+    "num_statements": 7520,
+    "covered_branches": 1729,
+    "num_branches": 2258
+  },
+  "critical_branch_percent": {
+    "accounting_agent/policy.py": 87.5,
+    "accounting_agent/permits.py": 72.159091,
+    "accounting_agent/approvals.py": 79.487179,
+    "accounting_agent/evidence.py": 70.0,
+    "accounting_agent/autonomy.py": 64.423077,
+    "accounting_agent/connector_contract.py": 81.506849,
+    "accounting_agent/model_runtime.py": 64.705882,
+    "accounting_agent/restricted_fortnox_mcp.py": 61.904762,
+    "accounting_agent/adapters/fortnox.py": 77.04918
+  }
+}

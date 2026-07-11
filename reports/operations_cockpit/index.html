@@ -11,7 +11,7 @@
 /* Hallmark · genre: modern-minimal · macrostructure: Narrative Workflow · theme: Coral · enrichment: none · nav: N9 · footer: Ft5
  * F4 knobs: numbering=1.0/2.0/3.0, layout=vertical-stack, connector=line · F3 knobs: columns=4, rules=every-row, numbers=tabular
  * context: inferred · audience: accountants/controllers/auditors/operators · use: clear exceptions and advance close · tone: technical-austere
- * pre-emit: P5 H5 E4 S5 R5 V4 · contrast: pass (40–41) · responsive: pass (34, 49–57)
+ * pre-emit: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · responsive: pass (34, 49–57)
  * slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · icons: pass (30)
  */
 * { box-sizing: border-box; }
@@ -203,6 +203,7 @@ select, input[type="search"] {
   background: var(--color-surface);
   color: var(--color-ink);
 }
+select { block-size: 2.75rem; }
 select:active, input[type="search"]:active { border-color: var(--color-accent-strong); }
 input[type="search"]::placeholder { color: var(--color-ink-muted); }
 .view-toggle {
@@ -314,11 +315,11 @@ main.shell { padding-block: var(--space-sm) var(--space-3xl); }
   border-block-end: var(--rule-thin) solid var(--color-line);
 }
 .stat dt { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 700; }
-.stat dd { margin: var(--space-xs) 0 var(--space-2xs); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; overflow-wrap: anywhere; }
-.stat span { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
-.stat[data-tone="safe"] dd { color: var(--color-safe); }
-.stat[data-tone="warning"] dd { color: var(--color-warning); }
-.stat[data-tone="danger"] dd { color: var(--color-danger); }
+.stat .stat-value { margin: var(--space-xs) 0 var(--space-2xs); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; overflow-wrap: anywhere; }
+.stat .stat-note { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
+.stat[data-tone="safe"] .stat-value { color: var(--color-safe); }
+.stat[data-tone="warning"] .stat-value { color: var(--color-warning); }
+.stat[data-tone="danger"] .stat-value { color: var(--color-danger); }
 .boundary-notice {
   display: grid;
   gap: var(--space-sm);
@@ -661,7 +662,7 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
     <a href="#controls" data-i18n data-en="Controls &amp; evidence" data-sv="Kontroller och underlag">Controls &amp; evidence</a>
   </div>
 </nav>
-<main id="main-content" class="shell">
+<main id="main-content" class="shell" tabindex="-1">
 <section class="workbench-section" id="today" aria-labelledby="today-title">
   <div class="section-heading">
     <div>
@@ -673,33 +674,33 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
   <dl class="stat-strip">
     <div class="stat" data-tone="danger">
       <dt data-i18n data-en="Priority cases" data-sv="Prioriterade ärenden">Priority cases</dt>
-      <dd data-i18n data-en="14" data-sv="14">14</dd>
-      <span data-i18n data-en="Unique cases, highest risk first" data-sv="Unika ärenden, högst risk först">Unique cases, highest risk first</span>
+      <dd class="stat-value" data-i18n data-en="14" data-sv="14">14</dd>
+      <dd class="stat-note" data-i18n data-en="Unique cases, highest risk first" data-sv="Unika ärenden, högst risk först">Unique cases, highest risk first</dd>
     </div>
     <div class="stat" data-tone="warning">
       <dt data-i18n data-en="Local run" data-sv="Lokal körning">Local run</dt>
-      <dd data-i18n data-en="Complete · review remains" data-sv="Klar · granskning återstår">Complete · review remains</dd>
-      <span data-i18n data-en="2026-07-10 20:09 UTC" data-sv="2026-07-10 20:09 UTC">2026-07-10 20:09 UTC</span>
+      <dd class="stat-value" data-i18n data-en="Complete · review remains" data-sv="Klar · granskning återstår">Complete · review remains</dd>
+      <dd class="stat-note" data-i18n data-en="2026-07-10 20:09 UTC" data-sv="2026-07-10 20:09 UTC">2026-07-10 20:09 UTC</dd>
     </div>
     <div class="stat" data-tone="safe">
       <dt data-i18n data-en="Fixture demo" data-sv="Testdatademo">Fixture demo</dt>
-      <dd data-i18n data-en="Complete" data-sv="Klar">Complete</dd>
-      <span data-i18n data-en="Synthetic evidence only" data-sv="Endast syntetiskt underlag">Synthetic evidence only</span>
+      <dd class="stat-value" data-i18n data-en="Complete" data-sv="Klar">Complete</dd>
+      <dd class="stat-note" data-i18n data-en="Synthetic evidence only" data-sv="Endast syntetiskt underlag">Synthetic evidence only</dd>
     </div>
     <div class="stat" data-tone="safe">
       <dt data-i18n data-en="Live ERP calls" data-sv="ERP-anrop i live-system">Live ERP calls</dt>
-      <dd data-i18n data-en="0" data-sv="0">0</dd>
-      <span data-i18n data-en="Zero required" data-sv="Noll krävs">Zero required</span>
+      <dd class="stat-value" data-i18n data-en="0" data-sv="0">0</dd>
+      <dd class="stat-note" data-i18n data-en="Zero required" data-sv="Noll krävs">Zero required</dd>
     </div>
     <div class="stat" data-tone="safe">
       <dt data-i18n data-en="Live Microsoft 365 calls" data-sv="Microsoft 365-anrop i live-system">Live Microsoft 365 calls</dt>
-      <dd data-i18n data-en="0" data-sv="0">0</dd>
-      <span data-i18n data-en="Zero required" data-sv="Noll krävs">Zero required</span>
+      <dd class="stat-value" data-i18n data-en="0" data-sv="0">0</dd>
+      <dd class="stat-note" data-i18n data-en="Zero required" data-sv="Noll krävs">Zero required</dd>
     </div>
     <div class="stat" data-tone="safe">
       <dt data-i18n data-en="Emails, payments, or filings" data-sv="E-post, betalningar eller inlämningar">Emails, payments, or filings</dt>
-      <dd data-i18n data-en="0" data-sv="0">0</dd>
-      <span data-i18n data-en="Zero required" data-sv="Noll krävs">Zero required</span>
+      <dd class="stat-value" data-i18n data-en="0" data-sv="0">0</dd>
+      <dd class="stat-note" data-i18n data-en="Zero required" data-sv="Noll krävs">Zero required</dd>
     </div></dl>
   <div class="boundary-notice" data-tone="danger">
     <strong data-i18n data-en="Observe and review only." data-sv="Endast observation och granskning.">Observe and review only.</strong>
@@ -1131,7 +1132,7 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
   <div class="section-heading">
     <div>
       <h2 id="integrations-title" data-i18n data-en="Integrations" data-sv="Integrationer">Integrations</h2>
-      <p data-i18n data-en="One read-only conformance contract across ERP and exchange providers. Exact tenant/company binding, source hashes, schema versions, cursors, and retry evidence are required." data-sv="Ett skrivskyddat konformitetskontrakt gäller för ERP- och utbytesleverantörer. Exakt tenant-/företagsbindning, källhashar, schemaversioner, markörer och återförsöksunderlag krävs.">One read-only conformance contract across ERP and exchange providers. Exact tenant/company binding, source hashes, schema versions, cursors, and retry evidence are required.</p>
+      <p data-i18n data-en="One read-only conformance contract across ERP and exchange providers. Exact tenant, company, and environment binding, source hashes, schema versions, cursors, and retry evidence are required." data-sv="Ett skrivskyddat konformitetskontrakt gäller för ERP- och utbytesleverantörer. Exakt tenant-, företags- och miljöbindning, källhashar, schemaversioner, markörer och återförsöksunderlag krävs.">One read-only conformance contract across ERP and exchange providers. Exact tenant, company, and environment binding, source hashes, schema versions, cursors, and retry evidence are required.</p>
     </div>
   </div>
   <div class="guided-only guided-summary"><strong data-i18n data-en="Connections stay read-only" data-sv="Anslutningar förblir skrivskyddade">Connections stay read-only</strong><p data-i18n data-en="Fortnox has a guarded read-only preview path. NetSuite, Oracle, SAP, Odoo, SIE, and CSV are declared contracts, not connected production integrations." data-sv="Fortnox har en bevakad skrivskyddad förhandsväg. NetSuite, Oracle, SAP, Odoo, SIE och CSV är deklarerade kontrakt, inte anslutna produktionsintegrationer.">Fortnox has a guarded read-only preview path. NetSuite, Oracle, SAP, Odoo, SIE, and CSV are declared contracts, not connected production integrations.</p></div>
@@ -1754,7 +1755,9 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
       if (!row.hidden) visible += 1;
     });
     const isSwedish = localeSelect && localeSelect.value === "sv-SE";
-    reviewResultCount.textContent = isSwedish ? `${visible} poster visas` : `${visible} items shown`;
+    reviewResultCount.textContent = isSwedish
+      ? (visible === 1 ? `${visible} post visas` : `${visible} poster visas`)
+      : (visible === 1 ? `${visible} item shown` : `${visible} items shown`);
     if (reviewEmpty) reviewEmpty.hidden = visible !== 0;
   }
   reviewSearch?.addEventListener("input", updateReviewResults);
@@ -1772,11 +1775,16 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
   const commandItems = [...document.querySelectorAll("#command-list li")];
   const commandEmpty = document.querySelector("#command-empty");
   let activeIndex = 0;
+  let restoreCommandTrigger = true;
   if (commandShortcut) commandShortcut.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
 
   const visibleCommandLinks = () => commandItems
     .filter((item) => !item.hidden)
     .map((item) => item.querySelector("a"));
+  const commandFocusableElements = () => dialog
+    ? [...dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), a[href], select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+      .filter((element) => !element.closest("[hidden]") && element.getClientRects().length)
+    : [];
   const setActiveCommand = (index) => {
     const links = visibleCommandLinks();
     if (!links.length) return;
@@ -1794,6 +1802,7 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
   };
   const openCommands = () => {
     if (!dialog) return;
+    restoreCommandTrigger = true;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
     if (commandSearch) {
@@ -1840,9 +1849,36 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
       firstLink.click();
     }
   });
-  commandItems.forEach((item) => item.querySelector("a")?.addEventListener("click", closeCommands));
+  commandItems.forEach((item) => item.querySelector("a")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const destination = event.currentTarget.getAttribute("href");
+    restoreCommandTrigger = false;
+    closeCommands();
+    if (destination) window.location.hash = destination;
+    requestAnimationFrame(() => {
+      const section = destination ? document.querySelector(destination) : null;
+      const focusTarget = section?.querySelector("h2, h3") || section;
+      if (!focusTarget) return;
+      if (!focusTarget.hasAttribute("tabindex")) focusTarget.setAttribute("tabindex", "-1");
+      focusTarget.focus({ preventScroll: true });
+    });
+  }));
+  dialog?.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = commandFocusableElements();
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   dialog?.addEventListener("click", (event) => { if (event.target === dialog) closeCommands(); });
-  dialog?.addEventListener("close", () => trigger?.focus());
+  dialog?.addEventListener("close", () => { if (restoreCommandTrigger) trigger?.focus(); });
 
   const sectionLinks = [...document.querySelectorAll(".section-nav a[href^='#']")];
   const markCurrentSection = (id) => sectionLinks.forEach((link) => {

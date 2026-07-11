@@ -9,7 +9,7 @@ from typing import Any
 
 from accounting_agent.audit import JsonlAuditLog
 from accounting_agent.bank_reconciliation import BankReconciliationPipeline
-from accounting_agent.local_demo import LocalDemoError, run_supplier_invoice_autopilot_demo
+from accounting_agent.local_demo import run_supplier_invoice_autopilot_demo
 
 
 DEFAULT_FAKE_CLIENT_OUTPUT = Path(".local/fake_client_dry_run")

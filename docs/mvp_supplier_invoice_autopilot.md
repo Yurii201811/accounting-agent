@@ -40,7 +40,8 @@ python3 -m accounting_agent.cli process-fixtures
 
 Defaults:
 
-- fixtures: `fixtures/supplier_invoices`
+- fixtures: packaged synthetic supplier-invoice samples (the checkout copy is
+  `fixtures/supplier_invoices`)
 - approval packets: `.local/approval_packets`
 - SQLite queue: `.local/accounting_agent.sqlite`
 

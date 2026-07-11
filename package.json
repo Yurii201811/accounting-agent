@@ -1,0 +1,20 @@
+{
+  "name": "accounting-agent-ui-qa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reproducible browser and accessibility QA for the synthetic Accounting Agent cockpit.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "ui:serve": "python3 scripts/serve_ui_preview.py --port 4173",
+    "test:ui": "playwright test",
+    "test:ui:chromium": "playwright test --project=chromium",
+    "test:ui:all": "playwright test --project=chromium --project=firefox --project=webkit"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.1"
+  }
+}

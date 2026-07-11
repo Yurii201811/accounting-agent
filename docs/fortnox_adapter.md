@@ -35,7 +35,7 @@ Use environment variables or construct `FortnoxConfig` directly.
 ```text
 FORTNOX_ENVIRONMENT=sandbox
 FORTNOX_BASE_URL=https://api.fortnox.se/3
-FORTNOX_ACCESS_TOKEN=
+# Set FORTNOX_ACCESS_TOKEN only in an ignored environment or secret manager.
 FORTNOX_DRY_RUN=true
 FORTNOX_ALLOW_DRAFT_WRITES=false
 FORTNOX_ALLOW_SENSITIVE_READS=false

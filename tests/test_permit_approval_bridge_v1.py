@@ -178,6 +178,7 @@ class PermitApprovalBridgeV1Tests(unittest.TestCase):
 
             forged = replace(
                 permit,
+                permit_id="forged-permit-id",
                 approval_receipt=replace(
                     permit.approval_receipt,
                     request_id="forged-approval-request",
@@ -619,6 +620,68 @@ class PermitApprovalBridgeV1Tests(unittest.TestCase):
             )
 
             self.assertEqual(permit, permit_store.get(permit.permit_id))
+
+    def test_sqlite_permit_store_rejects_duplicate_id_and_preserves_original(self) -> None:
+        context = PolicyContext(
+            action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+            client_id="client-a",
+            currency_code="SEK",
+            amount_minor=1_000_00,
+            risk_evidence_complete=True,
+        )
+        payload = {"amount_minor": 1_000_00}
+        with tempfile.TemporaryDirectory() as directory:
+            store = permits.SQLitePermitStore(Path(directory) / "permits.sqlite")
+            original = permits.PermitIssuer(
+                store,
+                clock=lambda: NOW,
+                id_factory=lambda: "permit_immutable_id",
+            ).issue(
+                decision=evaluate_policy(context),
+                context=context,
+                case_id="case-original",
+                entity_id="entity-se-1",
+                payload=payload,
+            )
+            forged_replacement = replace(original, case_id="case-attacker")
+
+            with self.assertRaisesRegex(
+                permits.PermitValidationError,
+                "permit_id already exists",
+            ):
+                store.save(forged_replacement)
+
+            self.assertEqual(original, store.get(original.permit_id))
+
+    def test_in_memory_permit_store_rejects_duplicate_id_and_preserves_original(self) -> None:
+        context = PolicyContext(
+            action_type=ActionType.DRAFT_SUPPLIER_INVOICE,
+            client_id="client-a",
+            currency_code="SEK",
+            amount_minor=1_000_00,
+            risk_evidence_complete=True,
+        )
+        payload = {"amount_minor": 1_000_00}
+        store = permits.InMemoryPermitStore()
+        original = permits.PermitIssuer(
+            store,
+            clock=lambda: NOW,
+            id_factory=lambda: "permit_immutable_memory_id",
+        ).issue(
+            decision=evaluate_policy(context),
+            context=context,
+            case_id="case-original",
+            entity_id="entity-se-1",
+            payload=payload,
+        )
+
+        with self.assertRaisesRegex(
+            permits.PermitValidationError,
+            "permit_id already exists",
+        ):
+            store.save(replace(original, case_id="case-attacker"))
+
+        self.assertEqual(original, store.get(original.permit_id))
 
     def test_sqlite_permit_store_migrates_legacy_receipt_columns(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

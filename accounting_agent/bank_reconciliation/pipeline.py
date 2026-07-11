@@ -252,19 +252,20 @@ def build_approval_packet(proposal: dict[str, Any]) -> dict[str, Any]:
 
 
 def policy_decision_to_dict(decision: PolicyDecision) -> dict[str, Any]:
+    thresholds = decision.amount_thresholds
     return {
         "action_type": decision.action_type.value,
         "client_id": decision.client_id,
         "mode": decision.permission_mode.value,
         "policy_version": decision.policy_version,
-        "amount_thresholds": {
-            "draft_without_review_minor": (
-                decision.amount_thresholds.draft_without_review_minor
-            ),
-            "escalation_required_minor": (
-                decision.amount_thresholds.escalation_required_minor
-            ),
-        },
+        "amount_thresholds": (
+            {
+                "draft_without_review_minor": thresholds.draft_without_review_minor,
+                "escalation_required_minor": thresholds.escalation_required_minor,
+            }
+            if thresholds is not None
+            else None
+        ),
         "required_reviews": list(decision.required_reviews),
         "reasons": list(decision.reasons),
         "is_external_write": decision.is_external_write,
