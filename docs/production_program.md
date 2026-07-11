@@ -9,7 +9,7 @@ and remains synthetic-only.
 
 The Apache-2.0 open-source core contains deterministic accounting contracts,
 synthetic fixtures, local review workflows, dry-run or read-only adapters,
-public documentation, and QA. Public v1 imports, 142 exported symbols, and nine
+public documentation, and QA. The original 142 public v1 exports and all nine
 CLI commands remain compatible through 1.x.
 
 The private cloud is a separate repository and product boundary. Authenticated

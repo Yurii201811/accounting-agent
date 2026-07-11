@@ -86,6 +86,20 @@
       "need": "Prove forged permits, replay, redirects, proxies, hostile paths, corrupted state, and concurrency cannot bypass accounting controls.",
       "acceptance_criteria": ["Invalid preflight performs zero network calls", "Duplicate permit IDs never replace trusted records", "Crash and concurrency recovery preserve scope and integrity"],
       "test_evidence": ["tests/test_policy_and_permits.py", "tests/test_permit_approval_bridge_v1.py", "tests/test_fortnox_adapter.py", "tests/test_autonomy_v1.py"]
+    },
+    {
+      "id": "QA-US-013",
+      "persona": "Archive administrator and auditor",
+      "need": "Preserve typed document provenance, processing lineage, retention, legal holds, and signatures across exact tenant and entity scope without storing raw document data in control records.",
+      "acceptance_criteria": ["Every top-level wire envelope is immutable and versioned", "Unknown classifications and incomplete archive evidence fail closed", "Retention cannot shorten and active legal holds cannot disappear"],
+      "test_evidence": ["tests/test_production_contracts_scope_archive.py"]
+    },
+    {
+      "id": "QA-US-014",
+      "persona": "Agent operator and draft-gateway integrator",
+      "need": "Reserve each exact provider draft attempt durably so replay, crash recovery, ambiguity, and concurrent workers cannot duplicate or re-scope an external action.",
+      "acceptance_criteria": ["Every idempotency key is atomically bound to an immutable execution scope", "Completed and unknown outcomes are terminal and tamper-resistant", "Ambiguous outcomes require human review and never retry automatically"],
+      "test_evidence": ["tests/test_execution_attempts.py"]
     }
   ],
   "public_python_api_groups": [
@@ -148,6 +162,24 @@
       "members": ["ConnectorBinding", "ConnectorEnvironment"],
       "story_ids": ["QA-US-007", "QA-US-012"],
       "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.contracts.scope",
+      "members": ["AuthenticationStrength", "MembershipRole", "TenantContext"],
+      "story_ids": ["QA-US-004", "QA-US-012"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.contracts.archive",
+      "members": ["ArchiveManifestV1", "ArchiveProcessingEntry", "ArchiveSignature", "DocumentClassification", "DocumentProvenance", "DocumentRecord", "LegalHoldState", "MalwareStatus", "PolicyPurpose", "PolicyVersion", "ProcessingAction", "ProvenanceSource", "QuarantineState", "RecordClass", "RetentionClass", "SignatureAlgorithm", "StorageRegion"],
+      "story_ids": ["QA-US-005", "QA-US-009", "QA-US-013"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.execution_attempts",
+      "members": ["EXECUTION_ATTEMPT_SCHEMA_VERSION", "ExecutionAttempt", "ExecutionAttemptConflict", "ExecutionAttemptError", "ExecutionAttemptHumanReviewRequired", "ExecutionAttemptIntegrityError", "ExecutionAttemptSchemaError", "ExecutionAttemptScope", "ExecutionAttemptState", "ExecutionAttemptTransitionError", "SQLiteExecutionAttemptStore"],
+      "story_ids": ["QA-US-004", "QA-US-012", "QA-US-014"],
+      "safety_class": "safety_critical"
     },
     {
       "module": "accounting_agent.documents",

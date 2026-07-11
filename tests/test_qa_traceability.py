@@ -21,9 +21,7 @@ class QATraceabilityTests(unittest.TestCase):
 
         export_groups = catalog["public_python_api_groups"]
         mapped_exports = {
-            export_name
-            for group in export_groups
-            for export_name in group["members"]
+            export_name for group in export_groups for export_name in group["members"]
         }
         self.assertEqual(set(accounting_agent.__all__), mapped_exports)
         for export_name in accounting_agent.__all__:
@@ -37,9 +35,7 @@ class QATraceabilityTests(unittest.TestCase):
 
         parser = build_parser()
         subparser_action = next(
-            action
-            for action in parser._actions
-            if getattr(action, "choices", None)
+            action for action in parser._actions if getattr(action, "choices", None)
         )
         self.assertEqual(
             set(subparser_action.choices),
@@ -53,9 +49,7 @@ class QATraceabilityTests(unittest.TestCase):
             result = build_public_preview(repo_root=ROOT, output_dir=output)
             html = result.output_path.read_text(encoding="utf-8")
         rendered_sections = {
-            section_id
-            for section_id in catalog["cockpit_sections"]
-            if f'id="{section_id}"' in html
+            section_id for section_id in catalog["cockpit_sections"] if f'id="{section_id}"' in html
         }
         self.assertEqual(set(catalog["cockpit_sections"]), rendered_sections)
 
@@ -64,7 +58,12 @@ class QATraceabilityTests(unittest.TestCase):
             self.assertLessEqual(set(surface["story_ids"]), story_ids)
             self.assertIn(
                 surface["safety_class"],
-                {"deterministic", "review_only", "forbidden_external"},
+                {
+                    "deterministic",
+                    "review_only",
+                    "safety_critical",
+                    "forbidden_external",
+                },
             )
 
     def test_every_story_has_acceptance_criteria_and_test_evidence(self) -> None:

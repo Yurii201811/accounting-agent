@@ -17,7 +17,8 @@ Never infer a later state from an earlier one.
 
 ## Prepare the revision
 
-1. Confirm a clean worktree and preserve the v1 import, 142-symbol, and
+1. Confirm a clean worktree and preserve every original v1 import and all 142
+   baseline symbols while cataloguing additive public contracts, plus the
    nine-command CLI contracts.
 2. Confirm every commit has the DCO `Signed-off-by:` trailer.
 3. Review the complete Git history and current tree for secrets, real client
