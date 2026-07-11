@@ -89,6 +89,8 @@ class WorkflowConfigurationTests(unittest.TestCase):
         )
         self.assertIn('python-version: ["3.11", "3.12", "3.13", "3.14"]', jobs["python"])
         self.assertIn("os: [ubuntu-latest, macos-14]", jobs["platform"])
+        for job in ("python", "platform"):
+            self.assertIn("fetch-depth: 0", jobs[job])
         self.assertIn("tests/offline_guard", jobs["python"])
         self.assertIn("tests/offline_guard", jobs["safety-contracts"])
         self.assertIn("scripts/coverage_gate.py", jobs["python"])
