@@ -10,7 +10,11 @@ from pathlib import Path
 from hypothesis import given, settings, strategies as st
 
 from accounting_agent.accounting.money import Money
-from accounting_agent.client_identity import client_id_from_storage_key, client_storage_key
+from accounting_agent.client_identity import (
+    canonical_client_id,
+    client_id_from_storage_key,
+    client_storage_key,
+)
 from accounting_agent.approvals import (
     ApprovalBinding,
     ApprovalRequest,
@@ -66,12 +70,15 @@ class PropertyBasedAccountingTests(unittest.TestCase):
 
     @PROPERTY_SETTINGS
     @given(client_id=CLIENT_IDS)
-    def test_client_storage_key_round_trip_is_reversible_and_path_safe(
+    def test_client_storage_key_round_trip_is_canonical_and_path_safe(
         self,
         client_id: str,
     ) -> None:
         storage_key = client_storage_key(client_id)
-        self.assertEqual(client_id, client_id_from_storage_key(storage_key))
+        self.assertEqual(
+            canonical_client_id(client_id),
+            client_id_from_storage_key(storage_key),
+        )
         self.assertRegex(storage_key, r"^v1-[a-z2-7]+$")
         self.assertNotIn("/", storage_key)
         self.assertNotIn("\\", storage_key)
