@@ -30,6 +30,7 @@ EXPECTED_REPOSITORY_TARGET = (
 EXPECTED_REVIEWED_REVISION = "1c3733d897faba9ac0436b9d5df9f1036f3bf1ae"
 REVIEW_SENSITIVE_PREFIXES = ("accounting_agent/", ".github/workflows/", "scripts/")
 REVIEW_SENSITIVE_FILES = {
+    ".gitleaks.toml",
     "MANIFEST.in",
     "package-lock.json",
     "package.json",

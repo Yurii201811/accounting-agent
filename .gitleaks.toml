@@ -10,3 +10,10 @@ paths = [
   '''(^|/)\.coverage(\..*)?$''',
   '''\.py[co]$''',
 ]
+
+[[allowlists]]
+description = "Exact synthetic idempotency fixture in execution-attempt tests"
+condition = "AND"
+paths = ['''^tests/test_execution_attempts\.py$''']
+regexTarget = "secret"
+regexes = ['''^idempotency-1$''']

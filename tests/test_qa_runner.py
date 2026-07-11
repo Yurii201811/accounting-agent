@@ -145,6 +145,11 @@ class QARunnerTests(unittest.TestCase):
         self.assertNotIn("disabledRules", config)
         for generated_path in (".local", ".venv", "__pycache__", "mutants"):
             self.assertIn(generated_path, config)
+        self.assertEqual(2, config.count("[[allowlists]]"))
+        self.assertIn('condition = "AND"', config)
+        self.assertIn("^tests/test_execution_attempts\\.py$", config)
+        self.assertIn("^idempotency-1$", config)
+        self.assertNotIn("commits =", config)
         self.assertEqual(".gitleaks.toml", gitleaks_step.command[-7])
 
     def test_summary_is_machine_readable_and_never_serializes_environment(self) -> None:
