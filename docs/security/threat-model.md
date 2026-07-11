@@ -258,7 +258,7 @@ failure, and no security boundary or accounting decision changes.
 - Notes: A repository document is not independent security assurance.
 
 Repository: sha256:e7c461de6f8bfd676a7ecb697b004d84d3f30b82258754fd278098a92a1ce766
-Version: 89849228039a3590a9962b20be88452befc76b19
+Version: b561bd1e43a8a385697121cba8839161a235be3b
 
 ## Regeneration policy
 
