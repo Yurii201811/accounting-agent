@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -724,7 +725,7 @@ class PermitSafetyBranchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "permits.sqlite"
             store = permits.SQLitePermitStore(database)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     """
                     CREATE TRIGGER synthetic_permit_rejection
@@ -851,7 +852,7 @@ class ApprovalSafetyBranchTests(unittest.TestCase):
 
             request = _request()
             store.create_request(request)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     "UPDATE approval_requests SET binding_digest = ? WHERE request_id = ?",
                     (_digest("tampered-binding"), request.request_id),
@@ -864,7 +865,7 @@ class ApprovalSafetyBranchTests(unittest.TestCase):
             database = Path(directory) / "approvals.sqlite"
             approvals.SQLiteApprovalStore(database)
             approvals.SQLiteApprovalStore(database)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 rows = connection.execute("PRAGMA index_list(approval_requests)").fetchall()
             self.assertTrue(any(row[1] == "approval_requests_binding_lookup" for row in rows))
 

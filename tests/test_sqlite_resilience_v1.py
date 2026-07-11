@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -64,13 +65,13 @@ class SQLiteResilienceV1Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "future.sqlite"
             future_version = LOCAL_QUEUE_SCHEMA_VERSION + 1
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 connection.execute(f"PRAGMA user_version = {future_version}")
 
             with self.assertRaisesRegex(QueueSchemaError, "unsafe downgrade"):
                 LocalQueue(path).initialize()
 
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
                 tables = connection.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -103,7 +104,7 @@ class SQLiteResilienceV1Tests(unittest.TestCase):
                 holder.close()
 
             self.assertEqual(0, queue.count("intake_cases"))
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 self.assertEqual("ok", connection.execute("PRAGMA integrity_check").fetchone()[0])
 
     def test_dynamic_queue_identifiers_are_restricted_to_exact_internal_allowlists(self) -> None:

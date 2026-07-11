@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -136,7 +137,7 @@ class AutonomySafetyBranchTests(unittest.TestCase):
             run_id = store.create(plan, created_at=NOW)
 
             self.assertEqual(run_id, store.create(plan, created_at=NOW))
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     "UPDATE autonomy_runs SET plan_digest = ? WHERE run_id = ?",
                     (_sha("forged-plan"), run_id),
@@ -270,7 +271,7 @@ class AutonomySafetyBranchTests(unittest.TestCase):
     def test_legacy_store_adds_both_lease_columns(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "legacy.sqlite"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     """
                     CREATE TABLE autonomy_runs (
@@ -287,7 +288,7 @@ class AutonomySafetyBranchTests(unittest.TestCase):
                     """
                 )
             SQLiteAutonomyStore(database)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 columns = {
                     row[1]
                     for row in connection.execute(

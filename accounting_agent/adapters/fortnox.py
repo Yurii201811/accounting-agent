@@ -220,14 +220,17 @@ class HttpFortnoxTransport:
                 )
             response_body = response_bytes.decode("utf-8")
         except urllib.error.HTTPError as error:
-            error_bytes = error.read(MAX_FORTNOX_ERROR_BYTES + 1)
-            truncated = len(error_bytes) > MAX_FORTNOX_ERROR_BYTES
-            error_body = error_bytes[:MAX_FORTNOX_ERROR_BYTES].decode(
-                "utf-8",
-                errors="replace",
-            )
-            if truncated:
-                error_body += " [TRUNCATED]"
+            try:
+                error_bytes = error.read(MAX_FORTNOX_ERROR_BYTES + 1)
+                truncated = len(error_bytes) > MAX_FORTNOX_ERROR_BYTES
+                error_body = error_bytes[:MAX_FORTNOX_ERROR_BYTES].decode(
+                    "utf-8",
+                    errors="replace",
+                )
+                if truncated:
+                    error_body += " [TRUNCATED]"
+            finally:
+                error.close()
             raise FortnoxTransportError(
                 f"Fortnox {method} {path} failed with HTTP {error.code}: "
                 f"{_redact(error_body, additional_secrets=(access_token,))}"

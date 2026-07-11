@@ -379,6 +379,7 @@ class HttpFortnoxTransportSecurityTests(unittest.TestCase):
 
         self.assertNotIn(token, str(raised.exception))
         self.assertIn("[REDACTED]", str(raised.exception))
+        self.assertTrue(error.fp.closed)
 
     def test_http_error_body_is_bounded_and_truncated(self) -> None:
         error_body = TrackingBytesIO(b"x" * 64_001)
@@ -408,6 +409,7 @@ class HttpFortnoxTransportSecurityTests(unittest.TestCase):
 
         self.assertEqual([64_001], error_body.read_limits)
         self.assertIn("[TRUNCATED]", str(raised.exception))
+        self.assertTrue(error_body.closed)
 
 
 class FortnoxDraftPayloadTests(unittest.TestCase):
