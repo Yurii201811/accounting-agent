@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -117,16 +118,31 @@ class QARunnerTests(unittest.TestCase):
                 "ACCOUNTING_AGENT_PREVIEW_BUNDLE"
             ],
         )
+        branch_step = next(step for step in release_plan if step.name == "branch-coverage")
+        system_step = next(step for step in release_plan if step.name == "v1-system-check")
+        self.assertIn("COVERAGE_PROCESS_START", qa._step_environment(branch_step))
+        self.assertNotIn("COVERAGE_PROCESS_START", qa._step_environment(system_step))
+        self.assertEqual("evidence-privacy", release_names[-1])
 
     def test_summary_is_machine_readable_and_never_serializes_environment(self) -> None:
         qa = _load_qa_module()
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "summary.json"
+            results = list(self._passing_results(qa, "quick"))
+            results[0] = qa.StepResult(
+                name=results[0].name,
+                command=(
+                    str(qa.ROOT / ".venv" / "bin" / "python3"),
+                    socket.gethostname(),
+                ),
+                exit_code=0,
+                duration_seconds=0.01,
+            )
             qa.write_summary(
                 output,
                 mode="quick",
                 revision="abc123",
-                results=self._passing_results(qa, "quick"),
+                results=results,
             )
             payload = json.loads(output.read_text(encoding="utf-8"))
 
@@ -137,6 +153,10 @@ class QARunnerTests(unittest.TestCase):
         self.assertNotIn("environment", serialized)
         self.assertNotIn("token", serialized)
         self.assertNotIn("password", serialized)
+        self.assertNotIn(str(qa.ROOT), serialized)
+        self.assertNotIn(str(Path.home()), serialized)
+        self.assertEqual("<repo>/.venv/bin/python3", payload["steps"][0]["command"][0])
+        self.assertEqual("<host>", payload["steps"][0]["command"][1])
 
     def test_release_summary_marks_missing_manual_voiceover_as_pending(self) -> None:
         qa = _load_qa_module()
@@ -494,6 +514,52 @@ class QARunnerTests(unittest.TestCase):
         self.assertEqual("end-revision", payload["revision"])
         self.assertFalse(payload["source_state_stable"])
         self.assertFalse(payload["plan_complete"])
+
+    def test_main_writes_fail_closed_provisional_summary_before_privacy_gate(self) -> None:
+        qa = _load_qa_module()
+        runs_root = ROOT / ".local" / "qa" / "runs"
+        runs_root.mkdir(parents=True, exist_ok=True)
+        events: list[str] = []
+
+        def record_summary(*args, **kwargs):
+            del args
+            results = kwargs["results"]
+            events.append(f"summary:{results[-1].exit_code}")
+            return {"passed": results[-1].exit_code == 0}
+
+        def record_step(step, **kwargs):
+            del kwargs
+            events.append(f"run:{step.name}")
+            return qa.StepResult(step.name, step.command, 0, 0.01)
+
+        with tempfile.TemporaryDirectory(
+            dir=runs_root,
+            prefix="privacy-order-",
+        ) as run_dir:
+            summary = Path(run_dir) / "summary.json"
+            privacy_step = qa.Step("evidence-privacy", (sys.executable, "privacy"))
+            with (
+                mock.patch.object(qa, "build_step_plan", return_value=(privacy_step,)),
+                mock.patch.object(qa, "run_step", side_effect=record_step),
+                mock.patch.object(qa, "write_summary", side_effect=record_summary),
+                mock.patch.object(
+                    qa,
+                    "_revision",
+                    side_effect=("start", "before-privacy", "end"),
+                ),
+                mock.patch.object(
+                    qa,
+                    "_working_tree_dirty",
+                    side_effect=(False, False, False),
+                ),
+            ):
+                exit_code = qa.main(["full", "--summary", str(summary)])
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["summary:1", "run:evidence-privacy", "summary:0"],
+            events,
+        )
 
     def test_release_exit_code_blocks_pending_manual_gate(self) -> None:
         qa = _load_qa_module()

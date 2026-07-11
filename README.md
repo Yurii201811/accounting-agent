@@ -107,7 +107,8 @@ uv run --frozen --group qa python scripts/qa.py full
 ```
 
 The full gate adds subprocess-aware branch coverage, property and resilience
-tests, Ruff, mypy, Bandit, dependency and credential-leak scans, privacy checks,
+tests, Ruff, mypy, Bandit, dependency and credential-leak scans, a final evidence
+privacy scrub/audit,
 targeted safety mutation testing, and the Chromium/Firefox/WebKit Playwright +
 axe matrix. Evidence is written below `.local/qa/runs/<UTC-run-id>/`.
 

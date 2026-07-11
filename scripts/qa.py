@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -41,7 +42,7 @@ QUICK_STEP_NAMES = (
     "offline-tests",
     "v1-system-check",
 )
-FULL_STEP_NAMES = (
+_FULL_CORE_STEP_NAMES = (
     "compile",
     "coverage-erase",
     "branch-coverage",
@@ -63,12 +64,14 @@ FULL_STEP_NAMES = (
     "fixture-policy",
     "ui-e2e",
 )
-RELEASE_STEP_NAMES = FULL_STEP_NAMES + (
+FULL_STEP_NAMES = _FULL_CORE_STEP_NAMES + ("evidence-privacy",)
+RELEASE_STEP_NAMES = _FULL_CORE_STEP_NAMES + (
     "package-release",
     "preview-build",
     "preview-contract",
     "fixture-policy-preview",
     "deployment-smoke",
+    "evidence-privacy",
 )
 _STEP_NAMES_BY_MODE = {
     "quick": QUICK_STEP_NAMES,
@@ -110,7 +113,7 @@ def build_step_plan(mode: str, *, python: str = sys.executable) -> tuple[Step, .
     if mode == "quick":
         return quick
 
-    full = (
+    full_core = (
         quick[0],
         Step("coverage-erase", (python, "-m", "coverage", "erase")),
         Step(
@@ -267,10 +270,22 @@ def build_step_plan(mode: str, *, python: str = sys.executable) -> tuple[Step, .
         ),
         Step("ui-e2e", ("npm", "run", "test:ui:all")),
     )
+    evidence_privacy = Step(
+        "evidence-privacy",
+        (
+            python,
+            "scripts/evidence_privacy.py",
+            "--root",
+            "{artifact_dir}",
+            "--output",
+            "{artifact_dir}/security/evidence-privacy.json",
+        ),
+        offline=True,
+    )
     if mode == "full":
-        return full
+        return full_core + (evidence_privacy,)
     if mode == "release":
-        return full + (
+        return full_core + (
             Step(
                 "package-release",
                 (
@@ -320,12 +335,13 @@ def build_step_plan(mode: str, *, python: str = sys.executable) -> tuple[Step, .
                     "{artifact_dir}/preview/deployment-smoke.json",
                 ),
             ),
-        )
+        ) + (evidence_privacy,)
     raise ValueError(f"Unsupported QA mode: {mode}")
 
 
 def _step_environment(step: Step, artifact_dir: Path | None = None) -> dict[str, str]:
     env = os.environ.copy()
+    env.pop("COVERAGE_PROCESS_START", None)
     if step.name == "preview-build":
         env["SOURCE_DATE_EPOCH"] = RELEASE_SOURCE_DATE_EPOCH
     if step.name == "deployment-smoke":
@@ -348,17 +364,33 @@ def _step_environment(step: Step, artifact_dir: Path | None = None) -> dict[str,
             part for part in (str(guard_dir), env.get("PYTHONPATH", "")) if part
         )
         env["PYTHONHASHSEED"] = "0"
-        env["COVERAGE_PROCESS_START"] = str(ROOT / "pyproject.toml")
+        if step.name == "branch-coverage":
+            env["COVERAGE_PROCESS_START"] = str(ROOT / "pyproject.toml")
     return env
 
 
 def _sanitize_log(output: str) -> str:
-    sanitized = output.replace(str(ROOT), "<repo>").replace(str(Path.home()), "<home>")
+    sanitized = (
+        output.replace(str(ROOT), "<repo>")
+        .replace(str(Path.home()), "<home>")
+        .replace(socket.gethostname(), "<host>")
+    )
+    sanitized = re.sub(
+        r"(?i)\b[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}\.)+local\b",
+        "<host>",
+        sanitized,
+    )
     return re.sub(
         r"(?i)\b(token|password|secret)(\s*[:=]\s*)(\S+)",
         r"\1\2[redacted]",
         sanitized,
     )
+
+
+def _sanitized_step_result(result: StepResult) -> dict[str, object]:
+    payload: dict[str, object] = asdict(result)
+    payload["command"] = [_sanitize_log(part) for part in result.command]
+    return payload
 
 
 def run_step(step: Step, *, artifact_dir: Path | None = None) -> StepResult:
@@ -437,7 +469,7 @@ def write_summary(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "plan_complete": plan_complete,
         "passed": automated_passed,
-        "steps": [asdict(result) for result in results],
+        "steps": [_sanitized_step_result(result) for result in results],
     }
     if mode == "release":
         if preview_bundle_sha256 is None:
@@ -726,12 +758,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     revision_start = _revision()
     dirty_start = _working_tree_dirty()
     results: list[StepResult] = []
-    for step in build_step_plan(args.mode):
+    plan = build_step_plan(args.mode)
+    privacy_step = (
+        plan[-1] if plan and plan[-1].name == "evidence-privacy" else None
+    )
+    execution_plan = plan[:-1] if privacy_step is not None else plan
+    for step in execution_plan:
         print(f"\n[qa] {step.name}", flush=True)
         result = run_step(step, artifact_dir=artifact_dir)
         results.append(result)
         if args.mode == "quick" and result.exit_code != 0:
             break
+
+    if privacy_step is not None:
+        revision_before_privacy = _revision()
+        dirty_before_privacy = _working_tree_dirty()
+        provisional_privacy_result = StepResult(
+            name=privacy_step.name,
+            command=privacy_step.command,
+            exit_code=1,
+            duration_seconds=0.0,
+            log_file="logs/evidence-privacy.log",
+        )
+        write_summary(
+            summary_path,
+            mode=args.mode,
+            revision=revision_before_privacy,
+            revision_start=revision_start,
+            results=(*results, provisional_privacy_result),
+            manual_accessibility_evidence=manual_accessibility_evidence,
+            source_state_stable=(
+                revision_start == revision_before_privacy
+                and not dirty_start
+                and not dirty_before_privacy
+            ),
+            working_tree_dirty=dirty_start or dirty_before_privacy,
+        )
+        print(f"\n[qa] {privacy_step.name}", flush=True)
+        results.append(run_step(privacy_step, artifact_dir=artifact_dir))
+        # The privacy step has now scrubbed the canonical local copy. Re-read that
+        # copy for the final summary instead of reintroducing unsanitized metadata.
+        manual_accessibility_evidence = None
 
     revision_end = _revision()
     dirty_end = _working_tree_dirty()

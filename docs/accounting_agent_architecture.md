@@ -2,7 +2,7 @@
 
 Generated: 2026-05-16
 
-Target workspace: `/Users/yuriibakurov/Documents/Accounting Agent`
+Target workspace: `<accounting-agent-workspace>`
 
 Status: v1 synthetic/local control-plane foundation plus architecture history.
 The workspace now contains typed accounting controls, entity-scoped local
@@ -21,7 +21,7 @@ approval packets, Openclaw-style risk findings, a gnubok shadow-ledger stub, a
 bank-reconciliation prototype, and a one-command local demo.
 
 The nearest mature governance reference remains
-`/Users/yuriibakurov/Documents/New project 5`, the Openclaw/Hermes OS repo,
+`<openclaw-hermes-workspace>`, the adjacent Openclaw/Hermes OS repo,
 which has policy gates, an SQLite task queue, agent role vocabulary, approvals,
 audit expectations, and reporting patterns. The accounting-agent workspace keeps
 its own finance/client-data boundary and only borrows the governance pattern.

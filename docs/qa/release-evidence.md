@@ -29,6 +29,7 @@ Each QA run writes sanitized evidence beneath `.local/qa/runs/<run-id>/`. The ru
 │   └── package-summary.json
 └── security/
     ├── bandit.json
+    ├── evidence-privacy.json
     ├── fixture-policy.json
     ├── gitleaks.json
     └── pip-audit.json
@@ -63,6 +64,9 @@ CLI-provided summaries must use `.local/qa/runs/<run-id>/summary.json`; manual i
   upload only the sanitized `.local/qa/runs/<run-id>/` evidence directory;
   accounting workflow artifacts and every other `.local` path are forbidden.
 - Logs replace the repository and home-directory prefixes with safe placeholders.
+- The final evidence-privacy gate scrubs text reports, inspects packaged archives
+  and binary artifacts for the current repository/home/host identity, rejects
+  symlinks, and fails if any machine-local path or hostname remains.
 - Evidence must not contain environment dumps, credentials, tokens, passwords, bank secrets, real client identifiers, source documents, private course material, or local absolute paths.
 - Security reports use redaction where the tool supports it.
 - Tests use deterministic synthetic data and inherited socket denial.

@@ -13,7 +13,7 @@ The QA program protects accountants from silent automation errors. It verifies p
 3. **Generative tests** exercise money and FX invariants, Unicode identities, policy monotonicity, journal balance, and mutation invalidation across larger input spaces.
 4. **Packaging tests** build wheel and source distributions, install them in clean environments, and run every supported CLI surface without checkout-relative dependencies.
 5. **Browser and accessibility tests** exercise English and Swedish, Guided and Expert views, six roles, supported browsers, responsive widths, keyboard operation, runtime-request restrictions, and WCAG 2.2 A/AA axe rules.
-6. **Security and privacy tests** deny sockets in inherited subprocesses, scan code and dependencies, detect secrets, validate synthetic resources, and probe hostile inputs without contacting external services.
+6. **Security and privacy tests** deny sockets in inherited subprocesses, scan code and dependencies, detect secrets, validate synthetic resources, scrub and audit the complete QA evidence tree, and probe hostile inputs without contacting external services.
 
 ## QA modes
 
