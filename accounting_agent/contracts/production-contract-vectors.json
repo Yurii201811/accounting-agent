@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "algorithm": "accounting-agent-restricted-json-sha256-v1",
+  "vectors": [
+    {
+      "id": "restricted-json-primitives",
+      "value": {
+        "schema_version": "v1",
+        "active": false,
+        "count": 7,
+        "note": null,
+        "values": ["räkning", 1, true]
+      },
+      "canonical_json": "{\"active\":false,\"count\":7,\"note\":null,\"schema_version\":\"v1\",\"values\":[\"räkning\",1,true]}",
+      "sha256": "6433575ab10cc4d6cc6b102190c057fce9f52e3878e210c2848157b23bc5e71c"
+    },
+    {
+      "id": "provider-route-subset",
+      "value": {
+        "schema_version": "v1",
+        "provider_id": "openai",
+        "classifications": ["confidential_accounting", "public_synthetic"],
+        "max_cost_minor": 10000
+      },
+      "canonical_json": "{\"classifications\":[\"confidential_accounting\",\"public_synthetic\"],\"max_cost_minor\":10000,\"provider_id\":\"openai\",\"schema_version\":\"v1\"}",
+      "sha256": "25da45c9eacd00525b5273f4a30512d4915a94ae561f929020847bdfad2e34f0"
+    },
+    {
+      "id": "connector-connection-v1",
+      "value": {
+        "schema_version": "v1",
+        "connection_id": "connection-001",
+        "revision": 1,
+        "tenant_id": "tenant-001",
+        "client_id": "client-001",
+        "legal_entity_id": "entity-se-001",
+        "provider_id": "fortnox",
+        "source_company_id": "fortnox-company-001",
+        "environment": "sandbox",
+        "auth_reference": "oauth-ref:fortnox-001",
+        "capabilities": ["read_master_data", "read_transactions"],
+        "status": "active",
+        "recorded_at": "2026-07-01T08:00:00Z"
+      },
+      "canonical_json": "{\"auth_reference\":\"oauth-ref:fortnox-001\",\"capabilities\":[\"read_master_data\",\"read_transactions\"],\"client_id\":\"client-001\",\"connection_id\":\"connection-001\",\"environment\":\"sandbox\",\"legal_entity_id\":\"entity-se-001\",\"provider_id\":\"fortnox\",\"recorded_at\":\"2026-07-01T08:00:00Z\",\"revision\":1,\"schema_version\":\"v1\",\"source_company_id\":\"fortnox-company-001\",\"status\":\"active\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b"
+    },
+    {
+      "id": "external-draft-command-v1",
+      "value": {
+        "schema_version": "v1",
+        "draft_command_id": "draft-command-001",
+        "tenant_id": "tenant-001",
+        "client_id": "client-001",
+        "legal_entity_id": "entity-se-001",
+        "case_id": "case-001",
+        "connection_id": "connection-001",
+        "connection_revision": 3,
+        "connection_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provider_id": "fortnox",
+        "environment": "sandbox",
+        "record_type": "supplier_invoice",
+        "payload_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "evidence_hashes": ["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"],
+        "policy_decision_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "approval_receipt_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "approval_decision_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "permit_id": "permit-001",
+        "permit_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "idempotency_key": "4444444444444444444444444444444444444444444444444444444444444444",
+        "created_at": "2026-07-02T08:00:00Z",
+        "expires_at": "2026-07-02T08:05:00Z"
+      },
+      "canonical_json": "{\"approval_decision_sha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"approval_receipt_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"case_id\":\"case-001\",\"client_id\":\"client-001\",\"connection_id\":\"connection-001\",\"connection_revision\":3,\"connection_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"created_at\":\"2026-07-02T08:00:00Z\",\"draft_command_id\":\"draft-command-001\",\"environment\":\"sandbox\",\"evidence_hashes\":[\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"],\"expires_at\":\"2026-07-02T08:05:00Z\",\"idempotency_key\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"legal_entity_id\":\"entity-se-001\",\"payload_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"permit_id\":\"permit-001\",\"permit_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"policy_decision_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"provider_id\":\"fortnox\",\"record_type\":\"supplier_invoice\",\"schema_version\":\"v1\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "5944b8c1db6e9314e0fc36e58e611f316143648311dd9bf5d22e2d1bcea32ccb"
+    },
+    {
+      "id": "model-route-policy-v1",
+      "value": {
+        "schema_version": "v1",
+        "policy_id": "model-route-policy-001",
+        "policy_version": 1,
+        "tenant_id": "tenant-001",
+        "provider_id": "openai",
+        "purposes": ["explanation_advice", "extraction_advice"],
+        "classifications": ["confidential_accounting", "public_synthetic"],
+        "processing_region": "eu",
+        "max_retention_days": 0,
+        "redaction_mode": "structured_minimization",
+        "max_requests": 100,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 500000,
+        "max_cost_minor": 10000,
+        "cost_currency": "SEK",
+        "consent_actor_id": "tenant-admin-001",
+        "consented_at": "2026-07-11T08:00:00Z",
+        "consent_evidence_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "dpa_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subprocessor_review_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "evaluation_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "no_training_required": true,
+        "expires_at": "2026-10-09T08:00:00Z",
+        "silent_fallback_allowed": false,
+        "can_approve": false,
+        "can_execute": false
+      },
+      "canonical_json": "{\"can_approve\":false,\"can_execute\":false,\"classifications\":[\"confidential_accounting\",\"public_synthetic\"],\"consent_actor_id\":\"tenant-admin-001\",\"consent_evidence_sha256\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"consented_at\":\"2026-07-11T08:00:00Z\",\"cost_currency\":\"SEK\",\"dpa_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"evaluation_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"expires_at\":\"2026-10-09T08:00:00Z\",\"max_cost_minor\":10000,\"max_input_tokens\":1000000,\"max_output_tokens\":500000,\"max_requests\":100,\"max_retention_days\":0,\"no_training_required\":true,\"policy_id\":\"model-route-policy-001\",\"policy_version\":1,\"processing_region\":\"eu\",\"provider_id\":\"openai\",\"purposes\":[\"explanation_advice\",\"extraction_advice\"],\"redaction_mode\":\"structured_minimization\",\"schema_version\":\"v1\",\"silent_fallback_allowed\":false,\"subprocessor_review_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "954044c83af1570b38d468d84a5ee7720b2cdfba8ebd7ac47b6ee8ca1fa72950"
+    },
+    {
+      "id": "safe-integer-boundary",
+      "value": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991
+      },
+      "canonical_json": "{\"maximum\":9007199254740991,\"minimum\":-9007199254740991}",
+      "sha256": "fbfd7545b6e2e70fe97a1b1de6bb85a3cea527c9e49f787bb6392cd36964b62c"
+    },
+    {
+      "id": "sync-checkpoint-001-v1",
+      "value": {
+        "schema_version": "v1",
+        "checkpoint_id": "checkpoint-001",
+        "sync_run_id": "sync-run-001",
+        "connection_id": "connection-001",
+        "connection_revision": 1,
+        "connection_sha256": "1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b",
+        "tenant_id": "tenant-001",
+        "client_id": "client-001",
+        "legal_entity_id": "entity-se-001",
+        "provider_id": "fortnox",
+        "source_company_id": "fortnox-company-001",
+        "environment": "sandbox",
+        "resource": "suppliers",
+        "sequence": 1,
+        "source_cursor": null,
+        "next_cursor": "cursor-001",
+        "record_count": 2,
+        "raw_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "canonical_record_set_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "captured_at": "2026-07-01T08:01:00Z"
+      },
+      "canonical_json": "{\"canonical_record_set_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"captured_at\":\"2026-07-01T08:01:00Z\",\"checkpoint_id\":\"checkpoint-001\",\"client_id\":\"client-001\",\"connection_id\":\"connection-001\",\"connection_revision\":1,\"connection_sha256\":\"1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b\",\"environment\":\"sandbox\",\"legal_entity_id\":\"entity-se-001\",\"next_cursor\":\"cursor-001\",\"provider_id\":\"fortnox\",\"raw_snapshot_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"record_count\":2,\"resource\":\"suppliers\",\"schema_version\":\"v1\",\"sequence\":1,\"source_company_id\":\"fortnox-company-001\",\"source_cursor\":null,\"sync_run_id\":\"sync-run-001\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "eb9bd90568f37ebffd91373da0f5405aebf8c311b15f48400f03efd55f38ffd0"
+    },
+    {
+      "id": "sync-checkpoint-002-v1",
+      "value": {
+        "schema_version": "v1",
+        "checkpoint_id": "checkpoint-002",
+        "sync_run_id": "sync-run-001",
+        "connection_id": "connection-001",
+        "connection_revision": 1,
+        "connection_sha256": "1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b",
+        "tenant_id": "tenant-001",
+        "client_id": "client-001",
+        "legal_entity_id": "entity-se-001",
+        "provider_id": "fortnox",
+        "source_company_id": "fortnox-company-001",
+        "environment": "sandbox",
+        "resource": "suppliers",
+        "sequence": 2,
+        "source_cursor": "cursor-001",
+        "next_cursor": null,
+        "record_count": 4,
+        "raw_snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "canonical_record_set_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "captured_at": "2026-07-01T08:02:00Z"
+      },
+      "canonical_json": "{\"canonical_record_set_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"captured_at\":\"2026-07-01T08:02:00Z\",\"checkpoint_id\":\"checkpoint-002\",\"client_id\":\"client-001\",\"connection_id\":\"connection-001\",\"connection_revision\":1,\"connection_sha256\":\"1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b\",\"environment\":\"sandbox\",\"legal_entity_id\":\"entity-se-001\",\"next_cursor\":null,\"provider_id\":\"fortnox\",\"raw_snapshot_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"record_count\":4,\"resource\":\"suppliers\",\"schema_version\":\"v1\",\"sequence\":2,\"source_company_id\":\"fortnox-company-001\",\"source_cursor\":\"cursor-001\",\"sync_run_id\":\"sync-run-001\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "a589c8f13ec6967254345d92bd1ed2da831b95793a77162db75a110ebf397ac1"
+    },
+    {
+      "id": "sync-checkpoint-chain-v1",
+      "value": {
+        "schema_version": "v1",
+        "checkpoint_sha256": [
+          "eb9bd90568f37ebffd91373da0f5405aebf8c311b15f48400f03efd55f38ffd0",
+          "a589c8f13ec6967254345d92bd1ed2da831b95793a77162db75a110ebf397ac1"
+        ]
+      },
+      "canonical_json": "{\"checkpoint_sha256\":[\"eb9bd90568f37ebffd91373da0f5405aebf8c311b15f48400f03efd55f38ffd0\",\"a589c8f13ec6967254345d92bd1ed2da831b95793a77162db75a110ebf397ac1\"],\"schema_version\":\"v1\"}",
+      "sha256": "7a536e3f85e64f7fc45b182467987dadb80bd8299c7946c1bbc2a332e87fd6c6"
+    },
+    {
+      "id": "source-reconciliation-v1",
+      "value": {
+        "schema_version": "v1",
+        "reconciliation_id": "reconciliation-suppliers",
+        "sync_run_id": "sync-run-001",
+        "connection_id": "connection-001",
+        "connection_revision": 1,
+        "connection_sha256": "1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b",
+        "tenant_id": "tenant-001",
+        "client_id": "client-001",
+        "legal_entity_id": "entity-se-001",
+        "provider_id": "fortnox",
+        "source_company_id": "fortnox-company-001",
+        "environment": "sandbox",
+        "resource": "suppliers",
+        "source_count": 4,
+        "observed_count": 4,
+        "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "observed_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "checkpoint_chain_sha256": "7a536e3f85e64f7fc45b182467987dadb80bd8299c7946c1bbc2a332e87fd6c6",
+        "status": "verified",
+        "recorded_at": "2026-07-01T08:10:00Z"
+      },
+      "canonical_json": "{\"checkpoint_chain_sha256\":\"7a536e3f85e64f7fc45b182467987dadb80bd8299c7946c1bbc2a332e87fd6c6\",\"client_id\":\"client-001\",\"connection_id\":\"connection-001\",\"connection_revision\":1,\"connection_sha256\":\"1eb50109c901df0c9fdb63b28647c070bf077441597f4ff35f3a4b78366af17b\",\"environment\":\"sandbox\",\"legal_entity_id\":\"entity-se-001\",\"observed_count\":4,\"observed_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"provider_id\":\"fortnox\",\"reconciliation_id\":\"reconciliation-suppliers\",\"recorded_at\":\"2026-07-01T08:10:00Z\",\"resource\":\"suppliers\",\"schema_version\":\"v1\",\"source_company_id\":\"fortnox-company-001\",\"source_count\":4,\"source_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"status\":\"verified\",\"sync_run_id\":\"sync-run-001\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "c427515f2f5d49bd2cf5b91e580ffd019c603dcfb19c35ca3a10ce85bc89b10e"
+    },
+    {
+      "id": "approval-decision-command-v1",
+      "value": {
+        "schema_version": "v1",
+        "context": {
+          "schema_version": "v1",
+          "tenant_id": "tenant-001",
+          "client_id": "client-001",
+          "legal_entity_id": "entity-se-001",
+          "actor_id": "reviewer-001",
+          "roles": ["reviewer"],
+          "authentication_strength": "multi_factor",
+          "request_id": "http-request-001"
+        },
+        "approval_request_id": "approval-request-001",
+        "approval_request_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requestor_actor_id": "preparer-001",
+        "acting_role": "reviewer",
+        "outcome": "approve",
+        "reason": "Evidence, policy, and supplier details independently reviewed.",
+        "expected_version": 1,
+        "idempotency_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "decided_at": "2026-07-02T08:00:00Z"
+      },
+      "canonical_json": "{\"acting_role\":\"reviewer\",\"approval_request_id\":\"approval-request-001\",\"approval_request_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"context\":{\"actor_id\":\"reviewer-001\",\"authentication_strength\":\"multi_factor\",\"client_id\":\"client-001\",\"legal_entity_id\":\"entity-se-001\",\"request_id\":\"http-request-001\",\"roles\":[\"reviewer\"],\"schema_version\":\"v1\",\"tenant_id\":\"tenant-001\"},\"decided_at\":\"2026-07-02T08:00:00Z\",\"expected_version\":1,\"idempotency_key\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"outcome\":\"approve\",\"reason\":\"Evidence, policy, and supplier details independently reviewed.\",\"requestor_actor_id\":\"preparer-001\",\"schema_version\":\"v1\"}",
+      "sha256": "f3ccb9fad8afe719373fedf1d4d3f9773759bc4d14a4687e68a52b4462278793"
+    },
+    {
+      "id": "external-draft-receipt-v1",
+      "value": {
+        "schema_version": "v1",
+        "receipt_id": "draft-receipt-001",
+        "draft_command_id": "draft-command-001",
+        "draft_command_sha256": "5944b8c1db6e9314e0fc36e58e611f316143648311dd9bf5d22e2d1bcea32ccb",
+        "tenant_id": "tenant-001",
+        "client_id": "client-001",
+        "legal_entity_id": "entity-se-001",
+        "case_id": "case-001",
+        "connection_id": "connection-001",
+        "connection_revision": 3,
+        "connection_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provider_id": "fortnox",
+        "environment": "sandbox",
+        "payload_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "idempotency_key": "4444444444444444444444444444444444444444444444444444444444444444",
+        "provider_reference": "supplier-invoice-draft-001",
+        "provider_response_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "readback_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "readback_status": "completed",
+        "observed_state": "unbooked_reversible",
+        "comparison_status": "exact_match",
+        "attempted_at": "2026-07-02T08:01:00Z",
+        "readback_at": "2026-07-02T08:02:00Z",
+        "recorded_at": "2026-07-02T08:03:00Z"
+      },
+      "canonical_json": "{\"attempted_at\":\"2026-07-02T08:01:00Z\",\"case_id\":\"case-001\",\"client_id\":\"client-001\",\"comparison_status\":\"exact_match\",\"connection_id\":\"connection-001\",\"connection_revision\":3,\"connection_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"draft_command_id\":\"draft-command-001\",\"draft_command_sha256\":\"5944b8c1db6e9314e0fc36e58e611f316143648311dd9bf5d22e2d1bcea32ccb\",\"environment\":\"sandbox\",\"idempotency_key\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"legal_entity_id\":\"entity-se-001\",\"observed_state\":\"unbooked_reversible\",\"payload_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"provider_id\":\"fortnox\",\"provider_reference\":\"supplier-invoice-draft-001\",\"provider_response_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"readback_at\":\"2026-07-02T08:02:00Z\",\"readback_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"readback_status\":\"completed\",\"receipt_id\":\"draft-receipt-001\",\"recorded_at\":\"2026-07-02T08:03:00Z\",\"schema_version\":\"v1\",\"tenant_id\":\"tenant-001\"}",
+      "sha256": "42f7e0b35a933d60f64397a4f5de49433ed8e109f202a700f33c6a5b7dd806bb"
+    }
+  ]
+}

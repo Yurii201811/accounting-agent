@@ -17,6 +17,17 @@ Guided/Expert cockpit. International support is a schema and jurisdiction-pack
 foundation, not a blanket compliance claim. Live provider writes remain
 forbidden.
 
+The additive production-contract layer now defines authenticated tenant scope,
+immutable document/archive records, typed canonical accounting facts,
+read-only connector synchronization and source reconciliation, optimistic human
+approval commands, hash-only external-draft envelopes and tenant-qualified
+model routes. These types perform no persistence, authentication, provider call
+or accounting action. See
+[docs/production-contracts.md](docs/production-contracts.md) and the checked
+cross-language hash vectors in
+`accounting_agent/contracts/production-contract-vectors.json`, which is also
+packaged in the wheel.
+
 Inspect that machine-readable boundary:
 
 ```bash

@@ -12,9 +12,23 @@ from accounting_agent.operations_cockpit import build_public_preview
 
 ROOT = Path(__file__).resolve().parents[1]
 TRACEABILITY_PATH = ROOT / "qa" / "traceability.json"
+V1_PUBLIC_API_PATH = ROOT / "qa" / "public-api-v1.json"
 
 
 class QATraceabilityTests(unittest.TestCase):
+    def test_original_v1_public_api_remains_an_immutable_compatibility_subset(self) -> None:
+        baseline = json.loads(V1_PUBLIC_API_PATH.read_text(encoding="utf-8"))
+        exports = baseline["exports"]
+
+        self.assertEqual(1, baseline["schema_version"])
+        self.assertEqual("1.0.0", baseline["release"])
+        self.assertEqual(142, len(exports))
+        self.assertEqual(len(exports), len(set(exports)))
+        self.assertLessEqual(set(exports), set(accounting_agent.__all__))
+        for export_name in exports:
+            with self.subTest(export=export_name):
+                self.assertIsNotNone(getattr(accounting_agent, export_name))
+
     def test_traceability_catalog_covers_every_public_surface(self) -> None:
         catalog = json.loads(TRACEABILITY_PATH.read_text(encoding="utf-8"))
         story_ids = {story["id"] for story in catalog["user_stories"]}

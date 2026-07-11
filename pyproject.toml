@@ -17,6 +17,7 @@ accounting-agent = "accounting_agent.cli:main"
 
 [tool.setuptools.package-data]
 accounting_agent = [
+  "contracts/*.json",
   "static/*.css",
   "static/*.svg",
   "static/*.txt",

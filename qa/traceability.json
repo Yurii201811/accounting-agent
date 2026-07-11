@@ -100,6 +100,34 @@
       "need": "Reserve each exact provider draft attempt durably so replay, crash recovery, ambiguity, and concurrent workers cannot duplicate or re-scope an external action.",
       "acceptance_criteria": ["Every idempotency key is atomically bound to an immutable execution scope", "Completed and unknown outcomes are terminal and tamper-resistant", "Ambiguous outcomes require human review and never retry automatically"],
       "test_evidence": ["tests/test_execution_attempts.py"]
+    },
+    {
+      "id": "QA-US-015",
+      "persona": "Accountant, controller, and auditor",
+      "need": "Exchange typed supplier, invoice, journal, balance, period, and dimension facts with exact scope and source provenance instead of arbitrary connector mappings.",
+      "acceptance_criteria": ["Money stays in the cross-language interoperable integer range and journals balance", "Locked periods and terminal lifecycle states cannot silently regress or reactivate", "Bank data is fingerprint-only and provenance binds the exact sync evidence"],
+      "test_evidence": ["tests/test_production_contracts_canonical.py"]
+    },
+    {
+      "id": "QA-US-016",
+      "persona": "Connector operator and enterprise controller",
+      "need": "Run read-only connector synchronization with exact environment, cursor, snapshot, canonical-record, and source-reconciliation evidence.",
+      "acceptance_criteria": ["Write capabilities are structurally rejected", "Checkpoint chains are ordered and cursor-continuous", "A run completes only when every requested source count and hash reconciles"],
+      "test_evidence": ["tests/test_production_contracts_sync.py"]
+    },
+    {
+      "id": "QA-US-017",
+      "persona": "Independent reviewer and draft-gateway operator",
+      "need": "Record authenticated approval decisions and exact supplier-invoice draft envelopes without granting posting authority or retrying ambiguous outcomes.",
+      "acceptance_criteria": ["Self-review and weak authentication are rejected", "Drafts bind policy, approval receipt, approval decision, permit, evidence, connection, and payload hashes", "Only an exact read-back of an unbooked reversible draft avoids a connection freeze"],
+      "test_evidence": ["tests/test_production_contracts_commands.py"]
+    },
+    {
+      "id": "QA-US-018",
+      "persona": "Tenant model administrator and security reviewer",
+      "need": "Qualify one advisory model provider with explicit data, region, retention, redaction, consent, evaluation, and budget limits and no silent fallback.",
+      "acceptance_criteria": ["Credentials never route to a model and private course data stays local", "Hosted sensitive data requires reviewed provider evidence and redaction", "Consent changes require a later timestamp and new authenticated evidence", "Policy successors can only narrow capability and no model can approve or execute", "Cross-language consumers reproduce the exact canonical hash vectors"],
+      "test_evidence": ["tests/test_production_contracts_model.py", "tests/test_production_contract_vectors.py"]
     }
   ],
   "public_python_api_groups": [
@@ -174,6 +202,30 @@
       "members": ["ArchiveManifestV1", "ArchiveProcessingEntry", "ArchiveSignature", "DocumentClassification", "DocumentProvenance", "DocumentRecord", "LegalHoldState", "MalwareStatus", "PolicyPurpose", "PolicyVersion", "ProcessingAction", "ProvenanceSource", "QuarantineState", "RecordClass", "RetentionClass", "SignatureAlgorithm", "StorageRegion"],
       "story_ids": ["QA-US-005", "QA-US-009", "QA-US-013"],
       "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.contracts.canonical",
+      "members": ["BankDetailsState", "CanonicalBalance", "CanonicalDimension", "CanonicalInvoice", "CanonicalJournal", "CanonicalPeriod", "CanonicalSupplier", "DimensionAssignment", "InvoiceKind", "InvoiceLine", "InvoiceStatus", "JournalLine", "JournalStatus", "LifecycleStatus", "PeriodState", "RecordSource"],
+      "story_ids": ["QA-US-005", "QA-US-009", "QA-US-015"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.contracts.commands",
+      "members": ["ApprovalDecisionCommand", "ApprovalDecisionOutcome", "DraftComparisonStatus", "DraftReadbackStatus", "ExternalDraftCommand", "ExternalDraftObservedState", "ExternalDraftReceipt", "ExternalDraftRecordType"],
+      "story_ids": ["QA-US-004", "QA-US-012", "QA-US-014", "QA-US-017"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.contracts.model",
+      "members": ["ModelRoutePolicy", "ProcessingRegion", "RedactionMode"],
+      "story_ids": ["QA-US-008", "QA-US-012", "QA-US-018"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.contracts.sync",
+      "members": ["ConnectorConnection", "ConnectorConnectionStatus", "ReconciliationStatus", "SourceReconciliation", "SyncCheckpoint", "SyncRun", "SyncRunStatus"],
+      "story_ids": ["QA-US-007", "QA-US-012", "QA-US-016"],
+      "safety_class": "safety_critical"
     },
     {
       "module": "accounting_agent.execution_attempts",

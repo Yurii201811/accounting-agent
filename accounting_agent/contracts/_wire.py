@@ -16,6 +16,7 @@ from accounting_agent.client_identity import canonical_client_id
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _WEAK_IDENTIFIERS = frozenset({"n/a", "none", "null", "unknown", "unset"})
+_MAX_INTEROPERABLE_INTEGER = 9_007_199_254_740_991
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 
@@ -89,9 +90,16 @@ def require_sha256(value: object, field_name: str) -> str:
 
 def require_positive_integer(value: object, field_name: str, *, allow_zero: bool = False) -> int:
     minimum = 0 if allow_zero else 1
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < minimum
+        or value > _MAX_INTEROPERABLE_INTEGER
+    ):
         qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(f"{field_name} must be a {qualifier} integer")
+        raise ValueError(
+            f"{field_name} must be a {qualifier} interoperable integer"
+        )
     return value
 
 
@@ -198,11 +206,17 @@ def canonical_json_sha256(value: object, field_name: str) -> str:
 
 
 def _require_restricted_json(value: object, field_name: str) -> None:
+    if value is None or type(value) is bool:
+        return
     if isinstance(value, str):
         if any(unicodedata.category(character).startswith("C") for character in value):
             raise ValueError(f"{field_name} must not contain control or format characters")
         return
     if type(value) is int:
+        if abs(value) > _MAX_INTEROPERABLE_INTEGER:
+            raise ValueError(
+                f"{field_name} integers must stay within the interoperable JSON range"
+            )
         return
     if isinstance(value, list):
         for item in value:
@@ -215,4 +229,6 @@ def _require_restricted_json(value: object, field_name: str) -> None:
             _require_restricted_json(key, field_name)
             _require_restricted_json(item, field_name)
         return
-    raise ValueError(f"{field_name} permits only objects, arrays, strings, and integers")
+    raise ValueError(
+        f"{field_name} permits only objects, arrays, strings, integers, booleans, and null"
+    )

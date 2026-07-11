@@ -10,15 +10,18 @@ cloud controls are assumptions and requirements, not existing mitigations.
 
 The current public core is a Python library and nine-command local CLI. Its
 runtime surfaces are synthetic fixture intake, deterministic accounting and
-risk rules, immutable tenant/document/archive contracts, an atomic durable
-execution-attempt store, local SQLite stores, append-oriented evidence, guarded
-Fortnox reads, a loopback-only local-model adapter, and generated static cockpit
-artifacts. It has no HTTP application, identity provider, multi-tenant cloud
-database, managed archive, production secrets broker, or authorized external
-write. The highest-value current assets are accounting integrity, tenant/client
-and legal-entity separation in local records, approval and permit provenance,
-evidence integrity, operator credentials, local files, and the structural
-absence of posting, payment, filing, sending, approval, deletion, settings, and
+risk rules, immutable tenant/document/archive contracts, typed canonical
+accounting records, read-only connection/sync/reconciliation contracts,
+identity-bound approval and external-draft envelopes, tenant-qualified advisory
+model policies, an atomic durable execution-attempt store, local SQLite stores,
+append-oriented evidence, guarded Fortnox reads, a loopback-only local-model
+adapter, and generated static cockpit artifacts. It has no HTTP application,
+identity provider, multi-tenant cloud database, managed archive, production
+secrets broker, draft gateway, or authorized external write. The highest-value
+current assets are accounting integrity, tenant/client and legal-entity
+separation in local records, approval and permit provenance, evidence integrity,
+operator credentials, local files, and the structural absence of posting,
+payment, filing, sending, approval, deletion, settings, and
 supplier-bank-detail authority.
 
 The future commercial cloud is expected to add authentication, multi-tenant
@@ -77,11 +80,25 @@ review before any real-client byte is accepted.
    idempotency key to permit, client, entity, case, provider, action and payload.
    Completed and ambiguous outcomes are immutable; ambiguity cannot auto-retry.
    This records authority and observations but performs no provider call.
-7. **Presentation boundary.** The generated cockpit and public preview render
+7. **Canonical fact and synchronization boundary.** `contracts/canonical.py`
+   and `contracts/sync.py` bind typed accounting facts to exact tenant, client,
+   entity, connection, sync, checkpoint, snapshot and mapping provenance.
+   Completion requires ordered cursor chains plus source count/hash
+   reconciliation. These are immutable interchange records, not proof that an
+   untrusted provider or mapping was substantively correct.
+8. **Model and draft-envelope boundary.** `contracts/model.py` records one
+   tenant-qualified advisory provider with explicit classification, region,
+   retention, redaction, consent, evidence and budgets. `contracts/commands.py`
+   records MFA-backed human decisions and hash-only supplier-invoice draft
+   envelopes. Construction, parsing or hashing grants no provider credential,
+   network capability, approval or execution authority. An external receipt is
+   safe only after exact read-back of an unbooked reversible draft; every other
+   outcome freezes for human review.
+9. **Presentation boundary.** The generated cockpit and public preview render
    synthetic or local artifacts. They must not turn attacker-controlled text
    into active HTML, load unexpected network resources, disclose local paths,
    or imply that navigation or role perspective changes authority.
-8. **Release boundary.** Source archives, wheels, CI actions, npm packages and
+10. **Release boundary.** Source archives, wheels, CI actions, npm packages and
    deployment artifacts cross from development into user environments. The
    provenance scan, locked dependencies, reproducible builds, secret scanning,
    package inspection and signed-release plan reduce but do not eliminate this
@@ -97,8 +114,25 @@ review before any real-client byte is accepted.
   duplicate permit IDs cannot replace prior material.
 - Provider, tenant/client, legal entity and environment bindings are rechecked
   at the execution boundary; request-body labels alone are not authority.
+- Canonical money uses interoperable-range integer minor units, journals
+  balance, known lifecycle states cannot silently regress or reactivate from
+  inactive, and a locked period cannot reopen through a record successor.
+- A read sync cannot complete without ordered, cursor-continuous checkpoints
+  and exact per-resource source count/hash reconciliation. Write capabilities
+  are rejected from connection contracts.
+- Model policies select exactly one provider, reject credentials, keep private
+  course material local, bind consent to fresh authenticated evidence, require
+  hosted-provider qualification and sensitive data redaction, and structurally
+  forbid silent fallback, approval and execution authority.
+- External-draft commands contain hashes and scope only. They bind the exact
+  connection, evidence, policy decision, approval receipt, approval decision,
+  permit and payload; they expose no payload bytes, credentials or execute
+  method.
 - External ambiguity fails closed. Timeouts cannot be treated as success, and a
   future draft gateway must read after write before resolving ambiguity.
+- Receipt safety is command-bound: a caller must verify the exact command and
+  matching payload/read-back hashes before an exact-match receipt can avoid a
+  freeze.
 - Raw client documents, credentials, tokens and bank secrets do not enter source
   control, ordinary logs, model prompts, synthetic tests or public previews.
 - International schemas do not imply jurisdictional, tax, filing or archive
@@ -124,9 +158,11 @@ confidence, currency, period state, reviewer claims, evidence hashes, policy
 versions, approval decisions or permit payloads to obtain a lower-risk outcome.
 Deterministic validation, monotonic policy, independent reviewer roles, exact
 hash bindings, append-only permit IDs and reload-before-use requirements are the
-principal current mitigations. Security review must prioritize any route that
-skips these controls, accepts stale approval, replays a permit, lets a preparer
-approve their own work, or exposes a forbidden external method.
+principal current mitigations. Typed canonical records additionally reject
+non-integer money, unbalanced journals, forged source lineage, lifecycle
+regression and locked-period reopening. Security review must prioritize any
+route that skips these controls, accepts stale approval, replays a permit, lets
+a preparer approve their own work, or exposes a forbidden external method.
 
 ## Scope confusion and future tenant escape
 
@@ -158,16 +194,22 @@ transport calls. The Ollama route is loopback-only and advisory. Future OAuth,
 Graph, NetSuite and gateway services require minimal scopes, encrypted secrets,
 revocation, rate limits, checkpoints, reconciliation, kill switches and a
 separate threat model. A forged provider response must never be accepted without
-source-count/hash reconciliation or read-after-write comparison.
+ordered checkpoint-chain and source-count/hash reconciliation or
+read-after-write comparison. Current connection/sync contracts reject write
+capabilities and incomplete completion evidence, but contain no OAuth client or
+transport and cannot establish the truth of provider-supplied source totals.
 
 ## Models, agents and computer use
 
 Prompt injection may ask a model or subagent to reveal data, change scope,
 approve work, call a connector, relax policy or use credentials. Current model
-routing is advisory and deterministic policy remains authoritative. Future
-agents must receive exact capability envelopes, redacted evidence references,
-budgets and signed structured-result schemas. No agent may hold a raw connector
-or write tool, approve its own work, or silently fall back to a hosted provider.
+routing is advisory and deterministic policy remains authoritative. The
+production route contract requires one tenant-qualified provider, explicit
+classification, region, retention, redaction, budgets, qualification evidence
+and no silent fallback; it has no invocation method. Future agents must receive
+exact capability envelopes, redacted evidence references, budgets and signed
+structured-result schemas. No agent may hold a raw connector or write tool,
+approve its own work, or silently fall back to a hosted provider.
 Computer use must remain supervised and read-only; login, credential, origin or
 unexpected-instruction changes stop the task.
 

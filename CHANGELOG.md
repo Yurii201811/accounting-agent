@@ -13,6 +13,11 @@ semantic versioning for its public Python and CLI compatibility contract.
   contracts.
 - Contract tests for governance files, package inclusion, and publishable
   source provenance.
+- Immutable tenant/archive, canonical accounting, read-only sync/reconciliation,
+  approval/draft, and model-route production contracts without external
+  authority.
+- Cross-language restricted-JSON SHA-256 vectors and additive traceability for
+  all 207 public Python exports while preserving the original v1 surface.
 
 ## 1.0.0
 

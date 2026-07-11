@@ -57,6 +57,19 @@ cockpit action, or private-cloud plan can override this ceiling.
 Completing a phase supplies evidence for the next one; it does not authorize
 production use or collapse later gates.
 
+## Current implementation checkpoint
+
+- Phase 0 is implemented as a local open-source baseline, with remote CI already
+  exercised on the prior release history. Publication, manual VoiceOver and
+  independent legal/security approvals remain separate pending gates.
+- Phase 1 now has additive tenant, archive, canonical accounting,
+  connection/sync/reconciliation, approval/draft, model-route and durable
+  execution-attempt contracts. Their construction performs no external action.
+- Phases 2 through 6 are not implemented by these contracts. The private cloud
+  service, authenticated API, PostgreSQL/RLS, AWS infrastructure, production
+  cockpit, live connector authorization and isolated draft gateway remain later
+  work and must not be inferred from the public types.
+
 ## Release gates
 
 The project records `local`, `artifact`, `remote`, `deployed`, and `production`
