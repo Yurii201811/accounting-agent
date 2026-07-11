@@ -1,0 +1,12 @@
+title = "Accounting Agent secret-scanning policy"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore generated and dependency artifacts; repository source remains scanned"
+paths = [
+  '''(^|/)(\.artifacts|\.git|\.local|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.venv|__pycache__|build|dist|htmlcov|mutants|node_modules|playwright-report|test-results|venv)(/|$)''',
+  '''(^|/)\.coverage(\..*)?$''',
+  '''\.py[co]$''',
+]

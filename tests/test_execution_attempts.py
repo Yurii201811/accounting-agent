@@ -115,7 +115,7 @@ class ExecutionAttemptScopeTests(unittest.TestCase):
 
     def test_record_rejects_invalid_state_metadata_and_counters(self) -> None:
         base = {
-            "idempotency_key": "idempotency-1",
+            "idempotency_key": "idempotency-1",  # gitleaks:allow - test identifier
             "scope": _scope(),
             "state": ExecutionAttemptState.RESERVED,
             "created_at": NOW,
@@ -605,12 +605,12 @@ class SQLiteExecutionAttemptStoreTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     connection.execute(
                         "UPDATE execution_attempts SET retry_count = 1.9 "
-                        "WHERE idempotency_key = 'idempotency-1'"
+                        "WHERE idempotency_key = 'idempotency-1'"  # gitleaks:allow
                     )
                 connection.execute("PRAGMA ignore_check_constraints = ON")
                 connection.execute(
                     "UPDATE execution_attempts SET retry_count = 1.9 "
-                    "WHERE idempotency_key = 'idempotency-1'"
+                    "WHERE idempotency_key = 'idempotency-1'"  # gitleaks:allow
                 )
 
             with self.assertRaisesRegex(ExecutionAttemptIntegrityError, "invalid durable data"):

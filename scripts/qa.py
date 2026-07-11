@@ -249,6 +249,8 @@ def build_step_plan(mode: str, *, python: str = sys.executable) -> tuple[Step, .
                 "gitleaks",
                 "dir",
                 ".",
+                "--config",
+                ".gitleaks.toml",
                 "--redact",
                 "--no-banner",
                 "--report-format",

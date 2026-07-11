@@ -131,6 +131,22 @@ class QARunnerTests(unittest.TestCase):
         self.assertIn("process.env.PLAYWRIGHT_HTML_OUTPUT_DIR", config)
         self.assertIn("process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME", config)
 
+    def test_gitleaks_scans_source_with_default_rules_and_skips_generated_artifacts(
+        self,
+    ) -> None:
+        qa = _load_qa_module()
+        config = (ROOT / ".gitleaks.toml").read_text(encoding="utf-8")
+        gitleaks_step = next(
+            step for step in qa.build_step_plan("full", python=sys.executable)
+            if step.name == "gitleaks"
+        )
+
+        self.assertIn("useDefault = true", config)
+        self.assertNotIn("disabledRules", config)
+        for generated_path in (".local", ".venv", "__pycache__", "mutants"):
+            self.assertIn(generated_path, config)
+        self.assertEqual(".gitleaks.toml", gitleaks_step.command[-7])
+
     def test_summary_is_machine_readable_and_never_serializes_environment(self) -> None:
         qa = _load_qa_module()
         with tempfile.TemporaryDirectory() as temp_dir:
