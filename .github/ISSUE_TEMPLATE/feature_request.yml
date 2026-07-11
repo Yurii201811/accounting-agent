@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a change within the public core and its safety ceiling.
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals must preserve the public-core/private-cloud boundary. Do not
+        attach real client or private course material.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem without private data.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Safe outcome
+      description: Describe the desired behavior and its authority ceiling.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and risks
+      description: Note v1 API/CLI, accounting, privacy, security, or accessibility effects.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Boundary confirmation
+      options:
+        - label: This proposal does not require live posting, approval, payment, filing, sending, deletion, settings changes, or bank-detail changes in the public core.
+          required: true

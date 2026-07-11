@@ -162,3 +162,18 @@ model, autonomy, computer-use, and release boundary. See
 `docs/local_demo_supplier_invoice_autopilot.md` for the one-command local demo,
 `docs/mvp_supplier_invoice_autopilot.md` for the packet schema, and
 `docs/operations_cockpit.md` for the interface workflow.
+
+## Open-source program
+
+The public core is licensed under Apache-2.0; see [LICENSE](LICENSE) and
+[NOTICE](NOTICE). Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md), the
+[DCO](DCO.md), [GOVERNANCE.md](GOVERNANCE.md), and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities through the
+private path in [SECURITY.md](SECURITY.md), never through a public issue.
+
+The durable public-core/private-cloud boundary, safety ceiling, and phased
+release gates are in [docs/production_program.md](docs/production_program.md).
+The current repository is not production-ready, and external publication stays
+gated by [docs/release-process.md](docs/release-process.md). Data accepted for
+source control is governed by
+[docs/provenance-and-private-data.md](docs/provenance-and-private-data.md).

@@ -1,13 +1,16 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "accounting-agent"
 version = "1.0.0"
 description = "Sweden-first, provider-neutral accounting automation foundation."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 
 [project.scripts]
 accounting-agent = "accounting_agent.cli:main"
@@ -41,7 +44,7 @@ qa = [
     "pytest>=9.1.1",
     "pytest-socket>=0.8.0",
     "ruff>=0.15.21",
-    "setuptools>=68",
+    "setuptools>=77",
     "twine>=6.2.0",
 ]
 

@@ -1,13 +1,21 @@
 include .gitignore
 include AGENTS.md
+include CHANGELOG.md
+include CODE_OF_CONDUCT.md
+include CONTRIBUTING.md
+include DCO.md
+include GOVERNANCE.md
+include LICENSE
+include NOTICE
 include README.md
+include SECURITY.md
 include favicon.svg
 include package-lock.json
 include package.json
 include playwright.config.ts
 include tokens.css
 include uv.lock
-recursive-include .github *.yml *.yaml
+graft .github
 recursive-include accounting_agent/fixtures *.json *.txt
 recursive-include accounting_agent/static *.css *.svg *.txt
 recursive-include config *.example

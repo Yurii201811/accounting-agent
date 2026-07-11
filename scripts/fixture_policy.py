@@ -28,6 +28,19 @@ _PRIVATE_COURSE_RE = re.compile(
     r"kursstart\.se|e42(?:7o|8o)-bokforing[23]|t-konton-mall-bok1",
     re.IGNORECASE,
 )
+_SOURCE_LOCAL_PATH_RE = re.compile(
+    r"(?:file://)?/(?:Users|home)/[^/\s]+/|"
+    r"(?:^|[\\/])Downloads[\\/]|[A-Za-z]:\\Users\\",
+    re.IGNORECASE | re.MULTILINE,
+)
+_PROVENANCE_SOURCE_EXTENSIONS = frozenset({".md", ".py", ".toml", ".yaml", ".yml"})
+_PROVENANCE_SCAN_EXEMPTIONS = frozenset(
+    {
+        "accounting_agent/operations_cockpit.py",
+        "scripts/evidence_privacy.py",
+        "scripts/fixture_policy.py",
+    }
+)
 _CREDENTIAL_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -209,6 +222,72 @@ def scan_resources(
     )
 
 
+def _scan_provenance_sources(repo_root: Path, *, max_bytes: int) -> ScanReport:
+    """Scan publishable docs and Python source for private provenance markers."""
+
+    inputs = [
+        path
+        for path in (repo_root / "accounting_agent", repo_root / "docs", repo_root / "scripts")
+        if path.exists() or path.is_symlink()
+    ]
+    inputs.extend(sorted(repo_root.glob("*.md")))
+    pyproject = repo_root / "pyproject.toml"
+    if pyproject.exists() or pyproject.is_symlink():
+        inputs.append(pyproject)
+
+    findings: list[Finding] = []
+    files_scanned = 0
+    for path in _iter_resource_paths(inputs):
+        display_path = _display_path(path, repo_root)
+        if display_path in _PROVENANCE_SCAN_EXEMPTIONS:
+            continue
+        if path.is_symlink():
+            findings.append(
+                Finding("symlink_forbidden", display_path, "Publishable source must be a regular file.")
+            )
+            continue
+        if not path.is_file() or path.suffix.lower() not in _PROVENANCE_SOURCE_EXTENSIONS:
+            continue
+        files_scanned += 1
+        if path.stat().st_size > max_bytes:
+            findings.append(
+                Finding(
+                    "file_too_large",
+                    display_path,
+                    f"File exceeds the provenance scan limit of {max_bytes} bytes.",
+                )
+            )
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            findings.append(
+                Finding("non_utf8_resource", display_path, "Publishable source must be UTF-8 text.")
+            )
+            continue
+        if _SOURCE_LOCAL_PATH_RE.search(text):
+            findings.append(
+                Finding(
+                    "local_path_marker",
+                    display_path,
+                    "Remove user-home and download paths from publishable source.",
+                )
+            )
+        if _PRIVATE_COURSE_RE.search(text):
+            findings.append(
+                Finding(
+                    "private_course_marker",
+                    display_path,
+                    "Private course provenance is forbidden in publishable source.",
+                )
+            )
+
+    return ScanReport(
+        files_scanned=files_scanned,
+        findings=tuple(sorted(findings, key=lambda finding: (finding.path, finding.code))),
+    )
+
+
 def scan_repository(
     repo_root: Path,
     *,
@@ -247,6 +326,7 @@ def scan_repository(
         display_root=repo_root,
     )
     reports = [fixture_report, preview_report]
+    reports.append(_scan_provenance_sources(repo_root, max_bytes=max_bytes))
     if preview_root is not None:
         reports.append(
             scan_resources(

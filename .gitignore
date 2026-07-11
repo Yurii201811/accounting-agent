@@ -42,3 +42,4 @@ htmlcov/
 playwright-report/
 test-results/
 mutants/
+.superpowers/
