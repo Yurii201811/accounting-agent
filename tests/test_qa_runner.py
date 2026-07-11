@@ -124,6 +124,13 @@ class QARunnerTests(unittest.TestCase):
         self.assertNotIn("COVERAGE_PROCESS_START", qa._step_environment(system_step))
         self.assertEqual("evidence-privacy", release_names[-1])
 
+    def test_playwright_config_honors_canonical_evidence_paths(self) -> None:
+        config = (ROOT / "playwright.config.ts").read_text(encoding="utf-8")
+
+        self.assertIn("process.env.PLAYWRIGHT_OUTPUT_DIR", config)
+        self.assertIn("process.env.PLAYWRIGHT_HTML_OUTPUT_DIR", config)
+        self.assertIn("process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME", config)
+
     def test_summary_is_machine_readable_and_never_serializes_environment(self) -> None:
         qa = _load_qa_module()
         with tempfile.TemporaryDirectory() as temp_dir:

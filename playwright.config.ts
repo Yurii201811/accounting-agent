@@ -7,6 +7,12 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535) {
 
 const baseURL = `http://127.0.0.1:${port}`;
 const artifactRoot = process.env.QA_RUN_DIR ?? ".local/qa/playwright";
+const resultsOutput =
+  process.env.PLAYWRIGHT_OUTPUT_DIR ?? `${artifactRoot}/test-results`;
+const htmlOutput =
+  process.env.PLAYWRIGHT_HTML_OUTPUT_DIR ?? `${artifactRoot}/html`;
+const junitOutput =
+  process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME ?? `${artifactRoot}/junit.xml`;
 
 export default defineConfig({
   testDir: "./tests/ui",
@@ -17,11 +23,11 @@ export default defineConfig({
   workers: process.env.CI ? 2 : undefined,
   timeout: 30_000,
   expect: { timeout: 5_000 },
-  outputDir: `${artifactRoot}/test-results`,
+  outputDir: resultsOutput,
   reporter: [
     ["list"],
-    ["html", { outputFolder: `${artifactRoot}/html`, open: "never" }],
-    ["junit", { outputFile: `${artifactRoot}/junit.xml` }],
+    ["html", { outputFolder: htmlOutput, open: "never" }],
+    ["junit", { outputFile: junitOutput }],
   ],
   use: {
     baseURL,

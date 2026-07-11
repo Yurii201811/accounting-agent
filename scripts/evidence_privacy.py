@@ -10,6 +10,7 @@ import re
 import socket
 import tarfile
 import zipfile
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -78,10 +79,10 @@ def _replacement_pairs(
     hostname: str,
 ) -> tuple[tuple[str, str], ...]:
     raw = (
-        (str(_absolute_without_resolving(root)), "<run>"),
-        (str(repo_root), "<repo>"),
-        (str(home), "<home>"),
-        (hostname, "<host>"),
+        (str(_absolute_without_resolving(root)), "[run]"),
+        (str(repo_root), "[repo]"),
+        (str(home), "[home]"),
+        (hostname, "[host]"),
     )
     unique = {value: placeholder for value, placeholder in raw if value}
     return tuple(sorted(unique.items(), key=lambda item: len(item[0]), reverse=True))
@@ -99,9 +100,9 @@ def _sanitize_text(
             sanitized = sanitized.replace(value, placeholder)
             replacement_count += count
     for pattern, placeholder in (
-        (_WINDOWS_HOME, "<home>"),
-        (_MAC_LINUX_HOME, "<home>"),
-        (_LOCAL_HOSTNAME, "<host>"),
+        (_WINDOWS_HOME, "[home]"),
+        (_MAC_LINUX_HOME, "[home]"),
+        (_LOCAL_HOSTNAME, "[host]"),
     ):
         sanitized, count = pattern.subn(placeholder, sanitized)
         replacement_count += count
@@ -121,7 +122,7 @@ def _identity_findings(
             continue
         finding = {
             "file": file_name,
-            "kind": f"residual-{placeholder.strip('<>')}-identity",
+            "kind": f"residual-{placeholder.strip('[]')}-identity",
         }
         if member_name is not None:
             finding["member"] = member_name
@@ -274,6 +275,15 @@ def sanitize_evidence_tree(
                 path.write_text(sanitized, encoding="utf-8")
                 files_sanitized += 1
                 replacement_count += count
+            try:
+                if path.suffix == ".json":
+                    json.loads(sanitized)
+                elif path.suffix in {".svg", ".xml"}:
+                    ElementTree.fromstring(sanitized)
+            except (json.JSONDecodeError, ElementTree.ParseError):
+                findings.append(
+                    {"file": relative_name, "kind": "invalid-structured-evidence"}
+                )
             residual = sanitized.encode("utf-8")
             findings.extend(
                 _identity_findings(

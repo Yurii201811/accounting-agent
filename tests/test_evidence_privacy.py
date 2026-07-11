@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 import zipfile
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 from scripts.evidence_privacy import (
@@ -53,6 +54,7 @@ class EvidencePrivacyTests(unittest.TestCase):
                 home=home,
                 hostname=hostname,
             )
+            parsed_junit = ElementTree.parse(root / "junit" / "python.xml")
 
             evidence = "\n".join(
                 path.read_text(encoding="utf-8")
@@ -66,8 +68,9 @@ class EvidencePrivacyTests(unittest.TestCase):
         self.assertNotIn(str(repo_root), evidence)
         self.assertNotIn(str(home), evidence)
         self.assertNotIn(hostname, evidence)
-        self.assertIn("<repo>/.venv/bin/python3", evidence)
-        self.assertIn("<host>", evidence)
+        self.assertEqual("[host]", parsed_junit.getroot().attrib["hostname"])
+        self.assertIn("[repo]/.venv/bin/python3", evidence)
+        self.assertIn("[host]", evidence)
 
     def test_rejects_symlinked_evidence_without_following_it(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -99,7 +102,7 @@ class EvidencePrivacyTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertNotIn("/Users/another-person", sanitized)
         self.assertNotIn("C:\\Users\\someone", sanitized)
-        self.assertIn("<home>/project/file.py", sanitized)
+        self.assertIn("[home]/project/file.py", sanitized)
 
     def test_reports_identity_embedded_in_an_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -129,6 +132,20 @@ class EvidencePrivacyTests(unittest.TestCase):
                 _write_report(root, outside, {"passed": True})
 
             self.assertFalse((Path(temp_dir) / "outside.json").exists())
+
+    def test_invalid_structured_evidence_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "run"
+            root.mkdir()
+            (root / "broken.json").write_text("{", encoding="utf-8")
+
+            result = sanitize_evidence_tree(root)
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(
+            [{"file": "broken.json", "kind": "invalid-structured-evidence"}],
+            result["findings"],
+        )
 
 
 if __name__ == "__main__":
