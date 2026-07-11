@@ -120,6 +120,17 @@ class WorkflowConfigurationTests(unittest.TestCase):
         self.assertEqual(1, workflow.count("pull-requests: read"))
         self.assertIn("github/codeql-action/init@", jobs["codeql"])
         self.assertIn("github/codeql-action/analyze@", jobs["codeql"])
+        self.assertIn("id: codeql-analysis", jobs["codeql"])
+        self.assertIn("output: .local/qa/runs/codeql", jobs["codeql"])
+        self.assertIn(
+            "upload: ${{ github.event.repository.private && 'never' || 'always' }}",
+            jobs["codeql"],
+        )
+        self.assertIn("if: ${{ always() && github.event.repository.private }}", jobs["codeql"])
+        self.assertIn("actions/upload-artifact@", jobs["codeql"])
+        self.assertIn("name: codeql-sarif", jobs["codeql"])
+        self.assertIn("if-no-files-found: error", jobs["codeql"])
+        self.assertIn("retention-days: 14", jobs["codeql"])
         self.assertIn("pip_audit", jobs["dependency-audit"])
         self.assertIn("uv export", jobs["dependency-audit"])
         self.assertIn("--require-hashes", jobs["dependency-audit"])
