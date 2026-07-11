@@ -275,10 +275,9 @@ def _validate_record_header(record: object, record_id_field: str) -> None:
     )
     require_positive_integer(getattr(record, "record_version"), "record_version")
     _validate_scope(record)
-    if not isinstance(getattr(record, "source"), RecordSource):
-        raise ValueError("source must be a RecordSource")
     source = getattr(record, "source")
-    assert isinstance(source, RecordSource)
+    if not isinstance(source, RecordSource):
+        raise ValueError("source must be a RecordSource")
     if (
         source.tenant_id,
         source.client_id,
@@ -293,7 +292,8 @@ def _validate_record_header(record: object, record_id_field: str) -> None:
 
 def _record_wire_header(record: object, record_id_field: str) -> dict[str, Any]:
     source = getattr(record, "source")
-    assert isinstance(source, RecordSource)
+    if not isinstance(source, RecordSource):
+        raise ValueError("source must be a RecordSource")
     return {
         "schema_version": "v1",
         record_id_field: getattr(record, record_id_field),
@@ -326,8 +326,11 @@ def _assert_record_successor(
             raise ValueError(f"record successor cannot change {field_name}")
     current_source = getattr(current, "source")
     previous_source = getattr(previous, "source")
-    assert isinstance(current_source, RecordSource)
-    assert isinstance(previous_source, RecordSource)
+    if not isinstance(current_source, RecordSource) or not isinstance(
+        previous_source,
+        RecordSource,
+    ):
+        raise ValueError("record successor sources must be RecordSource values")
     current_source.assert_successor_of(previous_source)
 
 

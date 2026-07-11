@@ -781,7 +781,8 @@ class SyncRun:
         previous_by_resource: dict[str, SyncCheckpoint] = {}
         cursors_by_resource: dict[str, set[str]] = {}
         for expected_sequence, untyped_checkpoint in enumerate(checkpoints, start=1):
-            assert isinstance(untyped_checkpoint, SyncCheckpoint)
+            if not isinstance(untyped_checkpoint, SyncCheckpoint):
+                raise ValueError("checkpoints contains an invalid typed record")
             checkpoint = untyped_checkpoint
             checkpoint.assert_matches_run(self)
             if checkpoint.checkpoint_id in checkpoint_ids:
@@ -825,10 +826,12 @@ class SyncRun:
         identifiers: set[str] = set()
         checkpoints_by_resource: dict[str, list[SyncCheckpoint]] = {}
         for checkpoint in checkpoints:
-            assert isinstance(checkpoint, SyncCheckpoint)
+            if not isinstance(checkpoint, SyncCheckpoint):
+                raise ValueError("checkpoints contains an invalid typed record")
             checkpoints_by_resource.setdefault(checkpoint.resource, []).append(checkpoint)
         for untyped_reconciliation in reconciliations:
-            assert isinstance(untyped_reconciliation, SourceReconciliation)
+            if not isinstance(untyped_reconciliation, SourceReconciliation):
+                raise ValueError("reconciliations contains an invalid typed record")
             reconciliation = untyped_reconciliation
             reconciliation.assert_matches_run(self)
             if reconciliation.resource in resources:
