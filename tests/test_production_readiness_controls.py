@@ -155,7 +155,19 @@ class ProductionReadinessControlTests(unittest.TestCase):
             {gate["id"] for gate in report["gates"] if gate["status"] == "pending"},
         )
 
-    def test_runtime_surface_change_invalidates_the_threat_model(self) -> None:
+    def test_runtime_drift_is_checked_in_checkout_and_never_approves_distribution(
+        self,
+    ) -> None:
+        if not (ROOT / ".git").exists():
+            result = _run_readiness("--json")
+            self.assertEqual(2, result.returncode, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual("pending", report["status"])
+            self.assertIs(report["ready"], False)
+            self.assertEqual(0, report["invalid_control_count"])
+            self.assertEqual(len(REQUIRED_FIRST_BYTE_GATES), report["blocking_gate_count"])
+            return
+
         with tempfile.TemporaryDirectory(
             dir=ROOT / "accounting_agent",
             prefix=".qa-runtime-drift-",
