@@ -14,8 +14,9 @@ risk rules, immutable tenant/document/archive contracts, typed canonical
 accounting records, read-only connection/sync/reconciliation contracts,
 identity-bound approval and external-draft envelopes, tenant-qualified advisory
 model policies, an atomic durable execution-attempt store, local SQLite stores,
-append-oriented evidence, guarded Fortnox reads, a loopback-only local-model
-adapter, and generated static cockpit artifacts. It has no HTTP application,
+append-oriented evidence, guarded Fortnox reads, loopback-only Ollama and local
+OpenAI-compatible advisory adapters, a synthetic-only signed Edge Worker
+library, and generated static cockpit artifacts. It has no HTTP application,
 identity provider, multi-tenant cloud database, managed archive, production
 secrets broker, draft gateway, or authorized external write. The highest-value
 current assets are accounting integrity, tenant/client and legal-entity
@@ -98,7 +99,14 @@ review before any real-client byte is accepted.
    synthetic or local artifacts. They must not turn attacker-controlled text
    into active HTML, load unexpected network resources, disclose local paths,
    or imply that navigation or role perspective changes authority.
-10. **Release boundary.** Source archives, wheels, CI actions, npm packages and
+10. **Synthetic Edge Worker boundary.** `accounting_agent/edge_worker/` binds an
+    exact local-model job and canonical result to tenant, client, entity, case,
+    evidence, provider, model, prompt hash, budgets and deadline. Its tool
+    inventory is empty. Optional Ed25519 verification and a process-local replay
+    guard detect result mutation and same-process reuse, but do not provide
+    durable device identity, distributed replay protection or production key
+    custody.
+11. **Release boundary.** Source archives, wheels, CI actions, npm packages and
    deployment artifacts cross from development into user environments. The
    provenance scan, locked dependencies, reproducible builds, secret scanning,
    package inspection and signed-release plan reduce but do not eliminate this
@@ -199,8 +207,9 @@ transport calls. The bounded offline connectors additionally require a frozen
 transport identity matching provider, connection revision/hash and complete
 binding before a call. Raw responses echo a canonical request hash and returned
 JSON evidence is recursively immutable; replay, identity drift, duplicate keys,
-non-finite floats and out-of-range JSON numbers are rejected. The Ollama route
-is loopback-only and advisory. Future OAuth,
+non-finite floats and out-of-range JSON numbers are rejected. Ollama and local
+OpenAI-compatible routes are loopback-only, strict-JSON, bounded and advisory;
+they accept no authorization header or model tool definitions. Future OAuth,
 Graph, NetSuite and gateway services require minimal scopes, encrypted secrets,
 revocation, rate limits, checkpoints, reconciliation, kill switches and a
 separate threat model. A forged provider response must never be accepted without
@@ -213,7 +222,11 @@ transport and cannot establish the truth of provider-supplied source totals.
 
 Prompt injection may ask a model or subagent to reveal data, change scope,
 approve work, call a connector, relax policy or use credentials. Current model
-routing is advisory and deterministic policy remains authoritative. The
+routing and the synthetic Edge Worker are advisory and deterministic policy
+remains authoritative. Edge jobs and signed results expose an empty tool
+inventory, reject nonlocal providers and nonsynthetic classification, and bind
+exact evidence and scope hashes. The process-local replay guard is not credited
+as a cloud control. The
 production route contract requires one tenant-qualified provider, explicit
 classification, region, retention, redaction, budgets, qualification evidence
 and no silent fallback; it has no invocation method. Future agents must receive

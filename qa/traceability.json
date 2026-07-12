@@ -128,6 +128,13 @@
       "need": "Qualify one advisory model provider with explicit data, region, retention, redaction, consent, evaluation, and budget limits and no silent fallback.",
       "acceptance_criteria": ["Credentials never route to a model and private course data stays local", "Hosted sensitive data requires reviewed provider evidence and redaction", "Consent changes require a later timestamp and new authenticated evidence", "Policy successors can only narrow capability and no model can approve or execute", "Cross-language consumers reproduce the exact canonical hash vectors"],
       "test_evidence": ["tests/test_production_contracts_model.py", "tests/test_production_contract_vectors.py"]
+    },
+    {
+      "id": "QA-US-019",
+      "persona": "Local Edge Worker operator and security reviewer",
+      "need": "Run a synthetic Ollama or local OpenAI-compatible advisory job with exact scope, evidence, budget, deadline and signed structured output but no accounting or tool authority.",
+      "acceptance_criteria": ["Only explicit loopback local-model calls are available", "Jobs and results bind exact tenant, client, legal entity, case, evidence, provider, model and prompt hashes", "The tool inventory stays empty and model output cannot approve, execute, call connectors or use ERP credentials", "Ed25519 signatures detect tampering and process-local replay while deterministic human review remains mandatory"],
+      "test_evidence": ["tests/test_edge_worker.py", "tests/test_model_runtime_v1.py"]
     }
   ],
   "public_python_api_groups": [
@@ -304,6 +311,12 @@
       "members": ["MCPPermissionMode", "RestrictedFortnoxMCP", "RestrictedMCPError", "RestrictedToolForbidden", "RestrictedToolMetadata", "RestrictedToolPermitError", "ToolCallAuditLog", "ToolCallLogEntry", "UnknownRestrictedTool"],
       "story_ids": ["QA-US-007", "QA-US-012"],
       "safety_class": "forbidden_external"
+    },
+    {
+      "module": "accounting_agent.edge_worker",
+      "members": ["EDGE_ADVISORY_CAPABILITY", "EdgeAdvisoryBudget", "EdgeAdvisoryJobV1", "EdgeAdvisoryResultV1", "EdgeJobBudgetExceeded", "EdgeJobExpired", "EdgeResultReplayError", "EdgeResultSignature", "EdgeResultVerificationError", "LocalEd25519Signer", "LocalEd25519Verifier", "LocalEdgeReplayGuard", "SignedEdgeAdvisoryResultV1", "edge_worker_authority_manifest", "run_edge_advisory_job", "sign_edge_result", "verify_signed_edge_result"],
+      "story_ids": ["QA-US-008", "QA-US-012", "QA-US-019"],
+      "safety_class": "safety_critical"
     },
     {
       "module": "accounting_agent.risk_review",

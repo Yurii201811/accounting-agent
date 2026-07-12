@@ -179,6 +179,7 @@ supplier fixture or demo command when testing a different review date.
 Start with `docs/accounting_agent_v1.md` for the product, jurisdiction, ERP,
 model, autonomy, computer-use, and release boundary. See
 `docs/local_model_evaluation.md` for the local Ollama comparison,
+`docs/edge_worker.md` for the synthetic-only, signed local advisory boundary,
 `docs/v1_research_decisions.md` for the problem-to-product decisions,
 `docs/local_demo_supplier_invoice_autopilot.md` for the one-command local demo,
 `docs/mvp_supplier_invoice_autopilot.md` for the packet schema, and
