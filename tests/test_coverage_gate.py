@@ -15,6 +15,9 @@ def _summary(*, lines: int, statements: int, branches: int, covered_branches: in
 
 
 class CoverageGateTests(unittest.TestCase):
+    def test_bounded_read_connectors_are_safety_critical(self) -> None:
+        self.assertIn("accounting_agent/adapters/read_only.py", CRITICAL_MODULES)
+
     def test_release_thresholds_pass_at_required_line_and_branch_percentages(self) -> None:
         report = {
             "totals": _summary(

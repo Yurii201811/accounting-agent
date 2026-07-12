@@ -48,6 +48,14 @@ Fortnox currently documents OAuth2 bearer-token API calls with `Authorization: B
 
 ## Read interface
 
+For new provider-neutral orchestration, prefer
+`accounting_agent.adapters.read_only.FortnoxReadConnector`. That public-core
+surface is limited to `accounts`, `suppliers`, and `financial_years`, requires
+an active provider-matching `ConnectorConnection`, and has no default network,
+environment, credential, URL, or generic-request implementation. The older
+`FortnoxAdapter` below remains a separate dry-run/testing boundary. See
+[offline_read_connectors.md](offline_read_connectors.md).
+
 Reference data:
 
 - `list_accounts(params=None)`

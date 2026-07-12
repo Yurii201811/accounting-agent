@@ -49,8 +49,8 @@
       "id": "QA-US-007",
       "persona": "ERP integrator",
       "need": "Evaluate Fortnox, NetSuite, Oracle, SAP, Odoo, SIE, and CSV through one fail-closed connector contract.",
-      "acceptance_criteria": ["Tenant, entity, environment, schema, cursor, and source hash remain bound", "Only guarded Fortnox reads are implemented", "External writes remain forbidden"],
-      "test_evidence": ["tests/test_connector_contract_v1.py", "tests/test_fortnox_adapter.py", "tests/test_restricted_fortnox_mcp.py"]
+      "acceptance_criteria": ["Tenant, client, legal entity, source company, environment, schema, cursor, exact request hash, and exact raw hash remain bound", "Fortnox master-data reads and fixed NetSuite SuiteQL master/period templates require an active provider-matching connection and immutable matching transport identity", "Cross-scope replay, mutable evidence, duplicate JSON keys, non-finite or out-of-range numbers, and transport drift fail closed", "No default network, credential, URL, generic SQL, reconciliation-success, or external-write surface exists"],
+      "test_evidence": ["tests/test_connector_contract_v1.py", "tests/test_offline_read_connectors.py", "tests/test_fortnox_adapter.py", "tests/test_restricted_fortnox_mcp.py"]
     },
     {
       "id": "QA-US-008",
@@ -85,7 +85,7 @@
       "persona": "Adversarial caller and failure operator",
       "need": "Prove forged permits, replay, redirects, proxies, hostile paths, corrupted state, and concurrency cannot bypass accounting controls.",
       "acceptance_criteria": ["Invalid preflight performs zero network calls", "Duplicate permit IDs never replace trusted records", "Crash and concurrency recovery preserve scope and integrity"],
-      "test_evidence": ["tests/test_policy_and_permits.py", "tests/test_permit_approval_bridge_v1.py", "tests/test_fortnox_adapter.py", "tests/test_autonomy_v1.py"]
+      "test_evidence": ["tests/test_policy_and_permits.py", "tests/test_permit_approval_bridge_v1.py", "tests/test_fortnox_adapter.py", "tests/test_offline_read_connectors.py", "tests/test_autonomy_v1.py"]
     },
     {
       "id": "QA-US-013",
@@ -166,6 +166,12 @@
       "members": ["LocalGnubokShadowLedgerAdapter", "ShadowLedgerComparison", "ShadowLedgerUnavailable", "mirror_supplier_invoice_proposal_to_shadow"],
       "story_ids": ["QA-US-002", "QA-US-005"],
       "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.adapters.read_only",
+      "members": ["FortnoxReadConnector", "NetSuiteSuiteQLReadConnector", "RawReadResponse", "SemanticReadRequest", "SemanticReadTransport", "SemanticTransportIdentity", "StrictReadDecodeError", "decode_raw_json_object"],
+      "story_ids": ["QA-US-007", "QA-US-012", "QA-US-016"],
+      "safety_class": "safety_critical"
     },
     {
       "module": "accounting_agent.agentic",

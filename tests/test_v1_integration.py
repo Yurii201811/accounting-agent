@@ -25,7 +25,7 @@ class V1IntegrationTests(unittest.TestCase):
             item["provider_id"]: item["lifecycle"] for item in summary["connectors"]
         }
         self.assertEqual(connector_states["fortnox"], "guarded_read_only")
-        self.assertEqual(connector_states["netsuite"], "declaration_only")
+        self.assertEqual(connector_states["netsuite"], "guarded_read_only")
         self.assertEqual(connector_states["oracle_fusion"], "declaration_only")
         self.assertEqual(connector_states["sap_s4hana"], "declaration_only")
         hosted = {

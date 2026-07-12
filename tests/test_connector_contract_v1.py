@@ -126,8 +126,24 @@ class ConnectorRegistryTests(unittest.TestCase):
             ProviderLifecycle.GUARDED_READ_ONLY,
             get_connector_manifest("fortnox").lifecycle,
         )
+        netsuite = get_connector_manifest("netsuite")
+        self.assertEqual(ProviderLifecycle.GUARDED_READ_ONLY, netsuite.lifecycle)
+        self.assertEqual(PaginationMode.OFFSET, netsuite.pagination.mode)
+        self.assertEqual("offset", netsuite.pagination.cursor_parameter)
+        self.assertEqual("next_offset", netsuite.pagination.next_cursor_field)
+        self.assertEqual(
+            CapabilityMode.READ_ONLY,
+            netsuite.capability(ConnectorCapability.READ_MASTER_DATA).mode,
+        )
+        self.assertEqual(
+            CapabilityMode.READ_ONLY,
+            netsuite.capability(ConnectorCapability.READ_PERIOD_LOCKS).mode,
+        )
+        self.assertEqual(
+            CapabilityMode.DECLARED,
+            netsuite.capability(ConnectorCapability.READ_TRANSACTIONS).mode,
+        )
         for provider_id in (
-            "netsuite",
             "oracle_fusion",
             "sap_s4hana",
             "odoo",
@@ -485,7 +501,7 @@ class ConnectorAdapterConformanceTests(unittest.TestCase):
         wrong_provider.provider_id = "netsuite"
         wrong_binding = _ConformingFixtureAdapter("fortnox", self.binding)
         excessive_page = _ConformingFixtureAdapter("fortnox", self.binding)
-        declaration_only = _ConformingFixtureAdapter("netsuite", self.binding)
+        declaration_only = _ConformingFixtureAdapter("oracle_fusion", self.binding)
         non_read_capability = _ConformingFixtureAdapter("fortnox", self.binding)
         write_capability = _ConformingFixtureAdapter("fortnox", self.binding)
         blank_cursor = _ConformingFixtureAdapter("fortnox", self.binding)

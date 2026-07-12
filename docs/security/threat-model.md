@@ -120,6 +120,11 @@ review before any real-client byte is accepted.
 - A read sync cannot complete without ordered, cursor-continuous checkpoints
   and exact per-resource source count/hash reconciliation. Write capabilities
   are rejected from connection contracts.
+- An injected connector transport must declare immutable provider and exact
+  connection identity before any read. Every raw response is bound to the
+  canonical semantic request hash; scope/revision/cursor replay, transport
+  identity drift, mutable returned records, duplicate keys, non-finite numbers
+  and interoperable-range overflow fail closed.
 - Model policies select exactly one provider, reject credentials, keep private
   course material local, bind consent to fresh authenticated evidence, require
   hosted-provider qualification and sensitive data redaction, and structurally
@@ -190,7 +195,12 @@ SSRF, credential leakage, redirect abuse, proxy capture, unsafe path/query
 encoding, response exhaustion and malformed JSON are realistic where network
 transports exist. Fortnox reads use an exact HTTPS origin, safe resource grammar,
 no redirects/proxies and bounded responses; invalid preflight must make zero
-transport calls. The Ollama route is loopback-only and advisory. Future OAuth,
+transport calls. The bounded offline connectors additionally require a frozen
+transport identity matching provider, connection revision/hash and complete
+binding before a call. Raw responses echo a canonical request hash and returned
+JSON evidence is recursively immutable; replay, identity drift, duplicate keys,
+non-finite floats and out-of-range JSON numbers are rejected. The Ollama route
+is loopback-only and advisory. Future OAuth,
 Graph, NetSuite and gateway services require minimal scopes, encrypted secrets,
 revocation, rate limits, checkpoints, reconciliation, kill switches and a
 separate threat model. A forged provider response must never be accepted without

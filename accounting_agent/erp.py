@@ -165,6 +165,19 @@ def _declarations(
     )
 
 
+def _netsuite_declarations() -> tuple[CapabilityDeclaration, ...]:
+    return tuple(
+        CapabilityDeclaration(
+            declaration.capability,
+            CapabilityMode.DECLARED_NOT_CONNECTED,
+            "No NetSuite transaction resource or query template is implemented.",
+        )
+        if declaration.capability is ErpCapability.READ_TRANSACTIONS
+        else declaration
+        for declaration in _declarations(read_mode=CapabilityMode.GUARDED_READ_ONLY)
+    )
+
+
 ERP_PROFILES: dict[ErpProvider, ErpProfile] = {
     ErpProvider.FORTNOX: ErpProfile(
         ErpProvider.FORTNOX,
@@ -179,8 +192,8 @@ ERP_PROFILES: dict[ErpProvider, ErpProfile] = {
         ErpProvider.NETSUITE,
         "Oracle NetSuite",
         "REST / SuiteQL / OAuth2",
-        "manifest_only",
-        _declarations(read_mode=CapabilityMode.DECLARED_NOT_CONNECTED),
+        "guarded_injected_read_only",
+        _netsuite_declarations(),
         (
             "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_157769826287.html",
             "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_156257799794.html",

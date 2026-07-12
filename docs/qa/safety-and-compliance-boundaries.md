@@ -15,7 +15,7 @@ Synthetic QA and MVP operation must not:
 - grant execution authority to an LLM, subagent, computer-use tool, cockpit, report, shadow ledger, or connector declaration;
 - process or commit real client documents, credentials, tokens, bank secrets, tenant-wide exports, or private course material.
 
-Fortnox remains dry-run and guarded-read only in this phase. Final posting, invoice sending, supplier-invoice approval, payments, deletes, and settings changes are structurally forbidden. NetSuite, Oracle, SAP, Odoo, SIE, and CSV remain declaration/conformance-only; they gain no live adapter call or write capability from QA work.
+Fortnox remains dry-run and guarded-read only in this phase. The public core has bounded Fortnox master-data and fixed NetSuite SuiteQL master/period reads only through a caller-injected semantic transport; it ships no live transport or credential resolver. NetSuite transactions and Oracle, SAP, Odoo, SIE, and CSV remain declaration/conformance-only. Final posting, invoice sending, supplier-invoice approval, payments, deletes, and settings changes are structurally forbidden.
 
 ## Agent and model boundary
 

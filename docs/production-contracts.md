@@ -67,3 +67,9 @@ idempotency, and persist the result in trusted storage. Likewise, an
 its construction never authorizes a network call. Final posting, approval,
 sending, payment, filing, deletion, settings changes and supplier-bank-detail
 changes remain structurally unavailable.
+
+The bounded connectors in `accounting_agent.adapters.read_only` can produce a
+strict raw `ConnectorPage` through an injected transport, but they do not
+construct checkpoints, assert source counts/hashes, or complete a `SyncRun`.
+Those success claims remain unsupported until an orchestrator persists and
+independently verifies the production sync evidence.

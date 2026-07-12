@@ -17,6 +17,16 @@ Guided/Expert cockpit. International support is a schema and jurisdiction-pack
 foundation, not a blanket compliance claim. Live provider writes remain
 forbidden.
 
+The additive public-core read slice supports bounded Fortnox account, supplier
+and financial-year inventory plus four fixed NetSuite SuiteQL master/period
+operations. It requires an active provider-matching `ConnectorConnection` and
+an explicitly injected semantic transport; the package supplies no network,
+credential, URL or generic-SQL implementation. Returned pages preserve the
+exact request and raw-byte hashes, require a matching immutable transport
+identity, and expose recursively immutable records, but do not claim source
+reconciliation or a completed sync.
+See [docs/offline_read_connectors.md](docs/offline_read_connectors.md).
+
 The additive production-contract layer now defines authenticated tenant scope,
 immutable document/archive records, typed canonical accounting facts,
 read-only connector synchronization and source reconciliation, optimistic human
