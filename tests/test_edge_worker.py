@@ -160,6 +160,31 @@ class EdgeWorkerPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "EdgeAdvisoryBudget"):
             EdgeAdvisoryJobV1(**values)
 
+    def test_job_rejects_invalid_model_prompt_and_prompt_budget(self) -> None:
+        from accounting_agent.edge_worker import EdgeAdvisoryBudget, EdgeAdvisoryJobV1
+
+        for field_name, invalid_value in (
+            ("model_id", ""),
+            ("model_id", None),
+            ("prompt", "  "),
+            ("prompt", None),
+        ):
+            with self.subTest(field_name=field_name, invalid_value=invalid_value):
+                values = self._job_kwargs()
+                values[field_name] = invalid_value
+                with self.assertRaisesRegex(ValueError, "non-empty"):
+                    EdgeAdvisoryJobV1(**values)
+
+        values = self._job_kwargs()
+        values["budget"] = EdgeAdvisoryBudget(
+            max_prompt_bytes=3,
+            max_response_bytes=8_192,
+            timeout_seconds=30,
+        )
+        values["prompt"] = "åå"
+        with self.assertRaisesRegex(ValueError, "prompt exceeds"):
+            EdgeAdvisoryJobV1(**values)
+
     def test_budget_has_nonextendable_global_ceilings(self) -> None:
         from accounting_agent.edge_worker import EdgeAdvisoryBudget
 
@@ -223,6 +248,214 @@ class EdgeWorkerPackageTests(unittest.TestCase):
         other_job = replace(job, case_id="different-case")
         with self.assertRaisesRegex(ValueError, "scope|job"):
             result.assert_matches_job(other_job)
+
+        with self.assertRaisesRegex(TypeError, "EdgeAdvisoryJobV1"):
+            result.assert_matches_job(object())
+
+    def test_result_rejects_unsafe_or_ambiguous_binding(self) -> None:
+        from accounting_agent import edge_worker
+
+        job = edge_worker.EdgeAdvisoryJobV1(**self._job_kwargs())
+        base = {
+            "result_id": "result-edge-00000001",
+            "job_id": job.job_id,
+            "job_digest": job.canonical_digest,
+            "request_id": job.request_id,
+            "tenant_id": job.tenant_id,
+            "client_id": job.client_id,
+            "legal_entity_id": job.legal_entity_id,
+            "case_id": job.case_id,
+            "evidence_sha256": job.evidence_sha256,
+            "provider_id": job.provider_id,
+            "model_id": job.model_id,
+            "purpose": job.purpose,
+            "data_classification": job.data_classification,
+            "prompt_sha256": job.prompt_sha256,
+            "payload_json": "{}",
+            "latency_ms": 1,
+            "endpoint": "http://127.0.0.1:11434",
+            "completed_at": datetime(2026, 7, 12, 11, 30, tzinfo=UTC),
+        }
+        cases = (
+            ("evidence_sha256", (), "evidence_sha256"),
+            ("evidence_sha256", ("a" * 64, "a" * 64), "evidence_sha256"),
+            ("provider_id", ProviderId.OPENAI, "local advisory providers"),
+            (
+                "data_classification",
+                DataClassification.CONFIDENTIAL_ACCOUNTING,
+                "public synthetic",
+            ),
+            ("model_id", "", "model_id"),
+        )
+        for field_name, invalid_value, message in cases:
+            with self.subTest(field_name=field_name, invalid_value=invalid_value):
+                values = dict(base)
+                values[field_name] = invalid_value
+                with self.assertRaisesRegex(ValueError, message):
+                    edge_worker.EdgeAdvisoryResultV1(**values)
+
+    def test_ed25519_key_and_primitive_inputs_fail_closed(self) -> None:
+        from accounting_agent import edge_worker
+
+        for private_key in (b"short", "x" * 32):
+            with self.subTest(private_key=private_key):
+                with self.assertRaisesRegex(ValueError, "32 bytes"):
+                    edge_worker.LocalEd25519Signer(
+                        key_reference="fixture",
+                        private_key_bytes=private_key,
+                    )
+
+        signer = edge_worker.LocalEd25519Signer(
+            key_reference="fixture",
+            private_key_bytes=b"\x01" * 32,
+        )
+        for payload in (b"", "not-bytes"):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, "non-empty bytes"):
+                    signer.sign(payload)
+
+        for public_key in (b"short", "x" * 32):
+            with self.subTest(public_key=public_key):
+                with self.assertRaisesRegex(ValueError, "32 bytes"):
+                    edge_worker.LocalEd25519Verifier(
+                        key_reference="fixture",
+                        public_key_bytes=public_key,
+                    )
+
+        verifier = signer.public_verifier()
+        for signature, payload in (("not-bytes", b"payload"), (b"x" * 64, b"")):
+            with self.subTest(signature=signature, payload=payload):
+                with self.assertRaisesRegex(
+                    edge_worker.EdgeResultVerificationError,
+                    "signature input",
+                ):
+                    verifier.verify(signature, payload)
+
+    def test_signature_metadata_and_wrapper_fail_closed(self) -> None:
+        from accounting_agent import edge_worker
+        from accounting_agent.contracts import SignatureAlgorithm
+
+        job = edge_worker.EdgeAdvisoryJobV1(**self._job_kwargs())
+        result = self._result_for(job)
+        valid_signature = b64encode(b"x" * 64).decode("ascii")
+        with self.assertRaisesRegex(ValueError, "Ed25519 only"):
+            edge_worker.EdgeResultSignature(
+                key_reference="fixture",
+                algorithm=SignatureAlgorithm.ECDSA_P256_SHA256,
+                signed_payload_sha256=result.canonical_digest,
+                signature_base64=valid_signature,
+                signed_at=result.completed_at,
+            )
+        with self.assertRaisesRegex(ValueError, "exactly 64 bytes"):
+            edge_worker.EdgeResultSignature(
+                key_reference="fixture",
+                algorithm=SignatureAlgorithm.ED25519,
+                signed_payload_sha256=result.canonical_digest,
+                signature_base64=b64encode(b"x" * 65).decode("ascii"),
+                signed_at=result.completed_at,
+            )
+
+        signature = edge_worker.EdgeResultSignature(
+            key_reference="fixture",
+            algorithm=SignatureAlgorithm.ED25519,
+            signed_payload_sha256=result.canonical_digest,
+            signature_base64=valid_signature,
+            signed_at=result.completed_at,
+        )
+        with self.assertRaisesRegex(TypeError, "result"):
+            edge_worker.SignedEdgeAdvisoryResultV1(
+                result=object(),
+                signature=signature,
+            )
+        with self.assertRaisesRegex(TypeError, "signature"):
+            edge_worker.SignedEdgeAdvisoryResultV1(
+                result=result,
+                signature=object(),
+            )
+        with self.assertRaisesRegex(ValueError, "hash"):
+            edge_worker.SignedEdgeAdvisoryResultV1(
+                result=result,
+                signature=replace(signature, signed_payload_sha256="f" * 64),
+            )
+        with self.assertRaisesRegex(ValueError, "precede"):
+            edge_worker.SignedEdgeAdvisoryResultV1(
+                result=result,
+                signature=replace(
+                    signature,
+                    signed_at=datetime(2026, 7, 12, 11, 29, tzinfo=UTC),
+                ),
+            )
+
+    def test_signing_entrypoints_reject_invalid_types_and_algorithms(self) -> None:
+        from accounting_agent import edge_worker
+        from accounting_agent.contracts import SignatureAlgorithm
+
+        job = edge_worker.EdgeAdvisoryJobV1(**self._job_kwargs())
+        result = self._result_for(job)
+        with self.assertRaisesRegex(TypeError, "EdgeAdvisoryResultV1"):
+            edge_worker.canonical_result_bytes(object())
+        self.assertIn(result.result_id.encode("utf-8"), edge_worker.canonical_result_bytes(result))
+
+        with self.assertRaisesRegex(TypeError, "EdgeAdvisoryResultV1"):
+            edge_worker.sign_edge_result(
+                object(),
+                object(),
+                signed_at=result.completed_at,
+            )
+
+        class WrongAlgorithmSigner:
+            algorithm = SignatureAlgorithm.RSA_PSS_SHA256
+            key_reference = "fixture"
+
+            def sign(self, _payload: bytes) -> bytes:
+                raise AssertionError("invalid signer must not be called")
+
+        with self.assertRaisesRegex(ValueError, "Ed25519 only"):
+            edge_worker.sign_edge_result(
+                result,
+                WrongAlgorithmSigner(),
+                signed_at=result.completed_at,
+            )
+
+    def test_verification_rejects_invalid_envelopes_before_crypto(self) -> None:
+        from accounting_agent import edge_worker
+
+        job = edge_worker.EdgeAdvisoryJobV1(**self._job_kwargs())
+        signer = edge_worker.LocalEd25519Signer(
+            key_reference="fixture",
+            private_key_bytes=b"\x01" * 32,
+        )
+        signed = edge_worker.sign_edge_result(
+            self._result_for(job),
+            signer,
+            signed_at=datetime(2026, 7, 12, 11, 31, tzinfo=UTC),
+        )
+        verifier = signer.public_verifier()
+        with self.assertRaisesRegex(TypeError, "signed"):
+            edge_worker.verify_signed_edge_result(
+                object(),
+                verifier,
+                expected_job=job,
+                replay_guard=edge_worker.LocalEdgeReplayGuard(),
+            )
+        with self.assertRaisesRegex(TypeError, "replay_guard"):
+            edge_worker.verify_signed_edge_result(
+                signed,
+                verifier,
+                expected_job=job,
+                replay_guard=object(),
+            )
+        mismatched_verifier = edge_worker.LocalEd25519Signer(
+            key_reference="other-key",
+            private_key_bytes=b"\x02" * 32,
+        ).public_verifier()
+        with self.assertRaisesRegex(edge_worker.EdgeResultVerificationError, "identity"):
+            edge_worker.verify_signed_edge_result(
+                signed,
+                mismatched_verifier,
+                expected_job=job,
+                replay_guard=edge_worker.LocalEdgeReplayGuard(),
+            )
 
     def test_ed25519_result_signature_verifies_once_and_rejects_replay(self) -> None:
         from accounting_agent import edge_worker

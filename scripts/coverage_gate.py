@@ -25,7 +25,9 @@ CRITICAL_MODULES = (
     "accounting_agent/restricted_fortnox_mcp.py",
     "accounting_agent/adapters/fortnox.py",
     "accounting_agent/adapters/read_only.py",
+    "accounting_agent/edge_worker/contracts.py",
     "accounting_agent/edge_worker/runtime.py",
+    "accounting_agent/edge_worker/signing.py",
 )
 
 

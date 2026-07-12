@@ -18,8 +18,14 @@ class CoverageGateTests(unittest.TestCase):
     def test_bounded_read_connectors_are_safety_critical(self) -> None:
         self.assertIn("accounting_agent/adapters/read_only.py", CRITICAL_MODULES)
 
-    def test_bounded_edge_runtime_is_safety_critical(self) -> None:
-        self.assertIn("accounting_agent/edge_worker/runtime.py", CRITICAL_MODULES)
+    def test_all_bounded_edge_modules_are_safety_critical(self) -> None:
+        self.assertTrue(
+            {
+                "accounting_agent/edge_worker/contracts.py",
+                "accounting_agent/edge_worker/runtime.py",
+                "accounting_agent/edge_worker/signing.py",
+            }.issubset(CRITICAL_MODULES)
+        )
 
     def test_release_thresholds_pass_at_required_line_and_branch_percentages(self) -> None:
         report = {
