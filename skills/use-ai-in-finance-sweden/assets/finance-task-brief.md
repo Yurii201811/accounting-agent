@@ -1,0 +1,21 @@
+# Finance AI task brief
+
+- Workflow and business question:
+- Role requesting the work:
+- Named output owner:
+- Named reviewer or approver:
+- Entity and jurisdiction:
+- Reporting or tax period:
+- Exact deliverable and destination:
+- Approved source systems and files:
+- Source-of-truth hierarchy:
+- Data classification:
+- Approved AI account, workspace, and tools:
+- Allowed actions:
+- Forbidden actions:
+- Accounting policy or materiality threshold:
+- Required reconciliations and checks:
+- Exceptions that must stop the work:
+- Output state: `analysis-only` / `draft-for-review` / `approved` / `rejected` / `forbidden`
+- Retention and evidence location:
+- Current-rule verification date:

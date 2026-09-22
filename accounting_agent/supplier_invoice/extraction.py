@@ -40,6 +40,8 @@ def extract_invoice_fields(fixture: dict[str, Any]) -> dict[str, Any]:
     extracted["supplier_org_number"] = normalize_org_number(extracted.get("supplier_org_number"))
     extracted["bankgiro"] = normalize_bankgiro(extracted.get("bankgiro"))
     extracted["amounts"] = normalize_amounts(extracted.get("amounts", {}))
+    if as_decimal(extracted.get("vat_rate")) is None:
+        extracted["vat_rate"] = None
     extracted["missing_required_fields"] = missing_required_fields(extracted)
     extracted["ocr_text_excerpt"] = (fixture.get("ocr_text") or "")[:500]
     return extracted
@@ -82,16 +84,20 @@ def as_decimal(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
     try:
-        return Decimal(str(value).replace(",", "."))
+        decimal_value = Decimal(str(value).replace(",", "."))
     except (InvalidOperation, ValueError):
         return None
+    return decimal_value if decimal_value.is_finite() else None
 
 
 def money(value: Any) -> str | None:
     decimal_value = as_decimal(value)
     if decimal_value is None:
         return None
-    return str(decimal_value.quantize(Decimal("0.01")))
+    try:
+        return str(decimal_value.quantize(Decimal("0.01")))
+    except InvalidOperation:
+        return None
 
 
 def _extract_from_text(text: str) -> dict[str, Any]:

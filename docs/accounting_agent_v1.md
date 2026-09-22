@@ -139,9 +139,13 @@ conditions. `TrustedPreparationProcessor` is an explicit trust declaration,
 not an OS sandbox; OpenClaw, Hermes, Codex, or other untrusted workers require a
 separate process/container sandbox before real data is considered.
 
-Provider manifests are routing declarations. Only the deterministic runtime and
-explicitly opted-in loopback Ollama path are callable here. Hosted providers and
-Codex remain disabled by default and have no runtime invoker. Official provider
+Provider manifests are routing declarations. The primary model adapter is the
+explicitly opted-in LM Studio/OpenAI-compatible loopback API at
+`http://127.0.0.1:1234/v1`; deterministic controls remain built in. The Ollama
+adapter at `http://127.0.0.1:11434` remains available only as an explicitly
+selected fallback. No automatic fallback occurs after a transport, schema, or
+validation failure. Hosted providers and Codex remain disabled by default and
+have no runtime invoker. Official provider
 contracts support structured tool or output schemas, but semantic accounting
 validation stays application-owned: [OpenAI tools](https://developers.openai.com/api/docs/guides/tools),
 [Anthropic tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview),

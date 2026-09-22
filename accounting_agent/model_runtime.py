@@ -2,8 +2,8 @@
 
 This module deliberately does not contain a hosted-provider client. It
 describes providers, plans privacy-aware routes, discovers an explicitly
-configured loopback Ollama service, offers an opt-in loopback-only JSON
-advisory call, gates outputs behind deterministic validation, and scores
+configured loopback OpenAI-compatible service, offers opt-in loopback-only JSON
+advisory calls (with an explicit Ollama compatibility path), gates outputs behind deterministic validation, and scores
 metadata-only synthetic benchmarks. Accounting authority always remains
 outside the model boundary.
 """
@@ -123,13 +123,13 @@ _PROVIDER_MANIFESTS: Final = {
             network_scope=NetworkScope.LOCALHOST_ONLY,
             invocation_mode="guarded_local_advisory",
             supported_classifications=_NON_SECRET_CLASSIFICATIONS,
-            enabled_by_default=True,
+            enabled_by_default=False,
         ),
         ProviderManifest(
             provider_id=ProviderId.LOCAL_OPENAI_COMPATIBLE,
-            label="Local OpenAI-compatible endpoint",
+            label="LM Studio / local OpenAI-compatible endpoint",
             network_scope=NetworkScope.LOCALHOST_ONLY,
-            invocation_mode="external_local_adapter_required",
+            invocation_mode="guarded_local_advisory",
             supported_classifications=_NON_SECRET_CLASSIFICATIONS,
             enabled_by_default=True,
         ),
@@ -493,6 +493,60 @@ class LocalModelInvocationError(RuntimeError):
         super().__init__(code)
 
 
+def local_openai_compatible_endpoint(
+    endpoint: str = "http://127.0.0.1:1234/v1",
+) -> str:
+    """Validate an OpenAI-compatible loopback API root ending in ``/v1``."""
+
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        raise ValueError("local OpenAI-compatible endpoint must be a loopback /v1 URL")
+    parsed = urlsplit(endpoint.strip())
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("local OpenAI-compatible endpoint must not contain credentials")
+    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("local OpenAI-compatible endpoint must use loopback HTTP")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("local OpenAI-compatible endpoint has an invalid port") from exc
+    if parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/v1":
+        raise ValueError("local OpenAI-compatible endpoint must end at the /v1 API root")
+    host = "127.0.0.1" if parsed.hostname == "localhost" else parsed.hostname
+    rendered_host = f"[{host}]" if host == "::1" else host
+    rendered_port = f":{port}" if port is not None else ""
+    return f"http://{rendered_host}{rendered_port}/v1"
+
+
+@dataclass(frozen=True)
+class LocalOpenAICompatibleAdvisoryResult:
+    """Strict JSON advice returned by a loopback OpenAI-compatible API."""
+
+    output: AdvisoryModelOutput
+    payload_json: str = field(repr=False)
+    latency_ms: int
+    endpoint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.output, AdvisoryModelOutput):
+            raise TypeError("output must be an AdvisoryModelOutput")
+        if not isinstance(self.payload_json, str) or not self.payload_json:
+            raise ValueError("payload_json must be non-empty")
+        if isinstance(self.latency_ms, bool) or self.latency_ms < 0:
+            raise ValueError("latency_ms must be a non-negative integer")
+        object.__setattr__(self, "endpoint", local_openai_compatible_endpoint(self.endpoint))
+
+    @property
+    def payload(self) -> dict[str, object]:
+        parsed = json.loads(self.payload_json)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("stored advisory payload is not a JSON object")
+        return parsed
+
+    @property
+    def payload_hash(self) -> str:
+        return self.output.payload_hash
+
+
 @dataclass(frozen=True)
 class OllamaAdvisoryResult:
     """Strict JSON advisory payload bound to an immutable output reference."""
@@ -529,6 +583,120 @@ _OLLAMA_ADVISORY_SYSTEM: Final = (
     "change settings, or claim that an action was executed. Human review and "
     "deterministic accounting controls remain authoritative."
 )
+
+
+def invoke_local_openai_compatible_advisory(
+    *,
+    request_id: str,
+    model_id: str,
+    purpose: ModelPurpose | str,
+    data_classification: DataClassification | str,
+    prompt: str,
+    endpoint: str = "http://127.0.0.1:1234/v1",
+    allow_local_invocation: bool = False,
+    timeout_seconds: float = 60.0,
+    opener: _OllamaOpener = _open_loopback_only,
+) -> LocalOpenAICompatibleAdvisoryResult:
+    """Invoke LM Studio or another loopback OpenAI-compatible chat API."""
+
+    if allow_local_invocation is not True:
+        raise PermissionError("explicit local invocation opt-in is required")
+    base = local_openai_compatible_endpoint(endpoint)
+    route_request = ModelRouteRequest(
+        request_id=request_id,
+        purpose=ModelPurpose(purpose),
+        data_classification=DataClassification(data_classification),
+        preferred_provider=ProviderId.LOCAL_OPENAI_COMPATIBLE,
+    )
+    route = plan_model_route(route_request)
+    if route.status is not RouteStatus.ROUTED:
+        reasons = ",".join(route.reason_codes) or "local_route_blocked"
+        raise PermissionError(f"local model route blocked: {reasons}")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("model_id must be non-empty")
+    if len(model_id) > 200 or re.search(r"[\x00-\x1f\x7f]", model_id):
+        raise ValueError("model_id contains unsupported characters")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt must be non-empty")
+    if len(prompt.encode("utf-8")) > 100_000:
+        raise ValueError("prompt exceeds the local advisory size limit")
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise ValueError("timeout_seconds must be a finite positive number")
+    timeout = float(timeout_seconds)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout_seconds must be a finite positive number")
+    timeout = min(timeout, 180.0)
+    body = json.dumps(
+        {
+            "model": model_id.strip(),
+            "messages": [
+                {"role": "system", "content": _OLLAMA_ADVISORY_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = Request(
+        f"{base}/chat/completions",
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "accounting-agent-local-advisory/1",
+        },
+        method="POST",
+    )
+    started = time.monotonic()
+    try:
+        with opener(request, timeout=timeout) as response:
+            raw = response.read(1_000_001)
+    except OSError as exc:
+        raise LocalModelInvocationError("local_openai_compatible_unavailable") from exc
+    latency_ms = max(0, round((time.monotonic() - started) * 1_000))
+    if len(raw) > 1_000_000:
+        raise LocalModelInvocationError("local_openai_compatible_response_too_large")
+    try:
+        response_payload = json.loads(raw.decode("utf-8"))
+        choices = response_payload["choices"]
+        if not isinstance(response_payload, dict) or not isinstance(choices, list) or len(choices) != 1:
+            raise TypeError
+        choice = choices[0]
+        message = choice["message"]
+        content = message["content"]
+        if not isinstance(choice, dict) or not isinstance(message, dict):
+            raise TypeError
+        if choice.get("finish_reason") != "stop" or message.get("role") != "assistant":
+            raise ValueError
+        if not isinstance(content, str) or len(content.encode("utf-8")) > 1_000_000:
+            raise TypeError
+    except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+        raise LocalModelInvocationError("invalid_local_openai_compatible_response") from exc
+    try:
+        advisory_payload = json.loads(content)
+    except (TypeError, ValueError) as exc:
+        raise LocalModelInvocationError("strict_json_object_required") from exc
+    if not isinstance(advisory_payload, dict):
+        raise LocalModelInvocationError("strict_json_object_required")
+    payload_json = json.dumps(advisory_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    output = AdvisoryModelOutput(
+        output_id=f"local-openai-{payload_hash[:16]}",
+        request_id=route_request.request_id,
+        provider_id=ProviderId.LOCAL_OPENAI_COMPATIBLE,
+        model_id=model_id.strip(),
+        data_classification=route_request.data_classification,
+        payload_hash=payload_hash,
+    )
+    return LocalOpenAICompatibleAdvisoryResult(
+        output=output,
+        payload_json=payload_json,
+        latency_ms=latency_ms,
+        endpoint=base,
+    )
 
 
 def invoke_ollama_advisory(

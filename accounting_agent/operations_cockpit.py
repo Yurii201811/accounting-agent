@@ -6,13 +6,16 @@ import json
 import os
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from decimal import Decimal, DecimalException
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from accounting_agent.accounting.money import Money
+from accounting_agent.jurisdictions import get_currency_spec
 from accounting_agent.autonomy import AUTONOMY_LADDER
 from accounting_agent.close import CLOSE_STAGE_ORDER, CloseStage
 from accounting_agent.connector_contract import (
@@ -148,12 +151,30 @@ class WorkflowStep:
 
 
 @dataclass(frozen=True)
+class ReviewFact:
+    label: str
+    label_sv: str
+    value: str
+    value_sv: str
+
+
+@dataclass(frozen=True)
+class ReviewContext:
+    party: str = ""
+    reference: str = ""
+    amount: str = ""
+    candidates: tuple[tuple[str, str], ...] = ()
+    facts: tuple[ReviewFact, ...] = ()
+
+
+@dataclass(frozen=True)
 class ReviewItem:
     item_id: str
     source: str
     mode: str
     reason: str
     artifact_path: str | None = None
+    context: ReviewContext | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +195,7 @@ class PrioritizedReviewItem:
     reasons: tuple[str, ...]
     categories: tuple[str, ...]
     artifact_path: str | None = None
+    context: ReviewContext | None = None
 
 
 @dataclass(frozen=True)
@@ -346,6 +368,7 @@ def _synthetic_public_preview_data(*, bundle: Path, output: Path) -> OperationsC
                 "bank reconciliation",
                 "approval_required",
                 "The proposed match needs an accountable reviewer.",
+                context=ReviewContext("Fiktiv Studio AB", "PAY-104-105", "−1,250.00 SEK", (("INV-104", "99%"), ("INV-105", "99%"))),
             )
         ],
         "escalation_required": [
@@ -354,6 +377,7 @@ def _synthetic_public_preview_data(*, bundle: Path, output: Path) -> OperationsC
                 "supplier invoice",
                 "escalation_required",
                 "The VAT treatment is intentionally uncertain in this synthetic example.",
+                context=ReviewContext("Fiktiv Kontorspartner AB", "INV-2026-007", "3,750.00 SEK"),
             )
         ],
         "forbidden": [
@@ -362,14 +386,15 @@ def _synthetic_public_preview_data(*, bundle: Path, output: Path) -> OperationsC
                 "supplier invoice",
                 "forbidden",
                 "A possible duplicate and changed bank details block the proposal.",
+                context=ReviewContext("Fiktiv IT Support AB", "INV-2026-003", "12,500.00 SEK"),
             )
         ],
-        "missing_info": [
+        "ambiguous_match": [
             ReviewItem(
                 "SYN-BANK-011",
                 "bank reconciliation",
                 "approval_required",
-                "Better match evidence is required.",
+                "Two open invoices have the same strongest match score.",
             )
         ],
         "duplicate_risk": [
@@ -578,6 +603,9 @@ def _render_environment_strip() -> str:
 
 
 def _render_header(data: OperationsCockpitData) -> str:
+    priority_count = len(_prioritized_review_items(data.review_queues))
+    review_label = f"Review priority cases · {priority_count} →"
+    review_label_sv = f"Granska prioriterade ärenden · {priority_count} →"
     return f"""
 <header class="app-header shell">
   <div class="nav-edge">
@@ -590,7 +618,9 @@ def _render_header(data: OperationsCockpitData) -> str:
   <div class="header-copy">
     <h1 data-i18n data-en="Move the close forward." data-sv="För bokslutet framåt.">Move the close forward.</h1>
     <p data-i18n data-en="Clear exceptions, finish reconciliations, and supervise automation from one evidence-first workspace. The agent prepares; accountable people decide." data-sv="Hantera undantag, slutför avstämningar och övervaka automatisering i en underlagsstyrd arbetsyta. Agenten förbereder; ansvariga personer beslutar.">Clear exceptions, finish reconciliations, and supervise automation from one evidence-first workspace. The agent prepares; accountable people decide.</p>
+    <p class="header-review-action"><a href="#review" {_i18n_attrs(review_label, review_label_sv)}>{_e(review_label)}</a></p>
   </div>
+  <div class="header-meta">
   <details class="workspace-preferences">
     <summary data-i18n data-en="View settings" data-sv="Visningsinställningar">View settings</summary>
     <div class="header-tools" aria-label="Workspace preferences" data-aria-label-en="Workspace preferences" data-aria-label-sv="Inställningar för arbetsytan">
@@ -622,26 +652,42 @@ def _render_header(data: OperationsCockpitData) -> str:
     <p class="role-boundary" id="role-boundary" data-i18n data-en="Perspective changes guidance only; safety policy and risk priority stay fixed." data-sv="Perspektivet ändrar bara vägledningen; säkerhetspolicy och riskprioritet ligger fast.">Perspective changes guidance only; safety policy and risk priority stay fixed.</p>
   </details>
   <p class="generation-stamp"><span data-i18n data-en="Snapshot generated" data-sv="Ögonblicksbild skapad">Snapshot generated</span> <time datetime="{_e(data.generated_at)}">{_e(_display_time(data.generated_at))}</time></p>
+  </div>
 </header>""".strip()
 
 
 def _render_section_nav(data: OperationsCockpitData) -> str:
+    sections = (
+        ("#today", "Today", "Idag", False),
+        ("#setup", "Start", "Start", True),
+        ("#review", "Review", "Granskning", False),
+        ("#close", "Close", "Bokslut", False),
+        ("#automation", "Automation", "Automatisering", False),
+        ("#integrations", "Connections", "Anslutningar", False),
+        ("#workflow", "How it works", "Så fungerar det", False),
+        ("#controls", "Controls &amp; evidence", "Kontroller och underlag", False),
+    )
     start_class = (
         ' class="expert-only"'
         if data.local_readiness == "local_fake_client_dry_run_complete"
         else ""
     )
+    options = "".join(
+        f'\n      <option value="{href}" data-en="{en}" data-sv="{sv}"{start_class if is_start else ""}>{en}</option>'
+        for href, en, sv, is_start in sections
+    )
+    anchors = "".join(
+        f'\n    <a href="{href}" data-i18n data-en="{en}" data-sv="{sv}"{start_class if is_start else ""}>{en}</a>'
+        for href, en, sv, is_start in sections
+    )
     return f"""
 <nav class="section-nav" aria-label="Cockpit sections" data-aria-label-en="Cockpit sections" data-aria-label-sv="Cockpitens sektioner">
-  <div class="shell section-nav-inner">
-    <a href="#today" data-i18n data-en="Today" data-sv="Idag">Today</a>
-    <a href="#setup"{start_class} data-i18n data-en="Start" data-sv="Start">Start</a>
-    <a href="#review" data-i18n data-en="Review" data-sv="Granskning">Review</a>
-    <a href="#close" data-i18n data-en="Close" data-sv="Bokslut">Close</a>
-    <a href="#automation" data-i18n data-en="Automation" data-sv="Automatisering">Automation</a>
-    <a href="#integrations" data-i18n data-en="Connections" data-sv="Anslutningar">Connections</a>
-    <a href="#workflow" data-i18n data-en="How it works" data-sv="Så fungerar det">How it works</a>
-    <a href="#controls" data-i18n data-en="Controls &amp; evidence" data-sv="Kontroller och underlag">Controls &amp; evidence</a>
+  <div class="section-jump">
+    <label for="section-jump" data-i18n data-en="Jump to section" data-sv="Hoppa till sektion">Jump to section</label>
+    <select id="section-jump">{options}
+    </select>
+  </div>
+  <div class="shell section-nav-inner">{anchors}
   </div>
 </nav>""".strip()
 
@@ -658,22 +704,26 @@ def _render_status_grid(data: OperationsCockpitData) -> str:
     local_tone = "warning" if local_complete and priority_count else "safe" if local_complete else "neutral"
     demo_value = "Complete" if demo_complete else "Not ready"
     demo_value_sv = "Klar" if demo_complete else "Inte klar"
-    cards = (
-        ("Priority cases", "Prioriterade ärenden", str(priority_count), str(priority_count), "danger" if priority_count else "safe", "Unique cases, highest risk first", "Unika ärenden, högst risk först"),
-        ("Local run", "Lokal körning", local_value, local_value_sv, local_tone, _display_time(data.last_run), _display_time(data.last_run)),
-        ("Fixture demo", "Testdatademo", demo_value, demo_value_sv, "safe" if demo_complete else "neutral", "Synthetic evidence only", "Endast syntetiskt underlag"),
+    safety_cards = (
         ("Live ERP calls", "ERP-anrop i live-system", str(live_fortnox), str(live_fortnox), "safe" if live_fortnox == 0 else "danger", "Zero required", "Noll krävs"),
         ("Live Microsoft 365 calls", "Microsoft 365-anrop i live-system", str(live_microsoft), str(live_microsoft), "safe" if live_microsoft == 0 else "danger", "Zero required", "Noll krävs"),
         ("Emails, payments, or filings", "E-post, betalningar eller inlämningar", str(external_actions), str(external_actions), "safe" if external_actions == 0 else "danger", "Zero required", "Noll krävs"),
     )
-    body = "".join(
+    safety_body = "".join(
         f"""
     <div class="stat" data-tone="{tone}">
       <dt {_i18n_attrs(label, label_sv)}>{_e(label)}</dt>
       <dd {_i18n_attrs(value, value_sv)}>{_e(value)}</dd>
       <span {_i18n_attrs(note, note_sv)}>{_e(note)}</span>
     </div>"""
-        for label, label_sv, value, value_sv, tone, note, note_sv in cards
+        for label, label_sv, value, value_sv, tone, note, note_sv in safety_cards
+    )
+    review_label = f"Review priority cases · {priority_count} →"
+    review_label_sv = f"Granska prioriterade ärenden · {priority_count} →"
+    priority_action = (
+        f'<a class="today-review-action" href="#review" {_i18n_attrs(review_label, review_label_sv)}>{_e(review_label)}</a>'
+        if priority_count
+        else f'<span class="today-priority-empty" {_i18n_attrs("No priority cases pending review.", "Inga prioriterade ärenden väntar på granskning.")}>No priority cases pending review.</span>'
     )
     queue = "".join(
         f'<div><dt {_i18n_attrs(key.replace("_", " ").title(), _QUEUE_KEY_SV.get(key, key.replace("_", " ").title()))}>{_e(key.replace("_", " ").title())}</dt><dd>{count}</dd></div>'
@@ -689,14 +739,39 @@ def _render_status_grid(data: OperationsCockpitData) -> str:
   <div class="section-heading">
     <div>
       <h2 id="today-title" data-i18n data-en="Today" data-sv="Idag">Today</h2>
-      <p data-i18n data-en="Current local run state. Building this page never calls an ERP, email, payment, tax, or filing system." data-sv="Aktuellt lokalt körläge. När sidan byggs anropas inga ERP-, e-post-, betalnings-, skatte- eller inlämningssystem.">Current local run state. Building this page never calls an ERP, email, payment, tax, or filing system.</p>
+      <p data-i18n data-en="Current local run state. No ERP, email, payment, tax, or filing system is called." data-sv="Aktuellt lokalt körläge. Inga ERP-, e-post-, betalnings-, skatte- eller inlämningssystem anropas.">Current local run state. No ERP, email, payment, tax, or filing system is called.</p>
     </div>
-    <p class="last-run"><span data-i18n data-en="Latest evidence" data-sv="Senaste underlag">Latest evidence</span> <time datetime="{_e(data.last_run)}">{_e(_display_time(data.last_run))}</time></p>
   </div>
-  <dl class="stat-strip">{body}</dl>
-  <div class="boundary-notice" data-tone="danger">
+  <div class="today-priority" data-tone="{'danger' if priority_count else 'safe'}">
+    <div class="today-priority-count">
+      <span class="today-priority-label" data-i18n data-en="Priority cases" data-sv="Prioriterade ärenden">Priority cases</span>
+      <strong class="today-priority-value">{priority_count}</strong>
+      <p data-i18n data-en="Unique cases, highest risk first" data-sv="Unika ärenden, högst risk först">Unique cases, highest risk first</p>
+    </div>
+    <div class="today-priority-action">{priority_action}</div>
+    <div class="today-run-state" data-tone="{local_tone}">
+      <span data-i18n data-en="Local run" data-sv="Lokal körning">Local run</span>
+      <strong {_i18n_attrs(local_value, local_value_sv)}>{_e(local_value)}</strong>
+      <p><span data-i18n data-en="Latest evidence" data-sv="Senaste underlag">Latest evidence</span> <time datetime="{_e(data.last_run)}">{_e(_display_time(data.last_run))}</time></p>
+    </div>
+  </div>
+  <section class="today-heartbeat" aria-labelledby="today-heartbeat-title">
+    <div class="today-heartbeat-heading">
+      <h3 id="today-heartbeat-title" data-i18n data-en="Live safety heartbeat" data-sv="Säkerhetspuls för live-system">Live safety heartbeat</h3>
+      <p data-i18n data-en="All three counters must stay at zero." data-sv="Alla tre räknare måste förbli noll.">All three counters must stay at zero.</p>
+    </div>
+    <dl class="safety-stat-strip">{safety_body}</dl>
+  </section>
+  <dl class="today-secondary">
+    <div class="stat" data-tone="{'safe' if demo_complete else 'neutral'}">
+      <dt data-i18n data-en="Fixture demo" data-sv="Testdatademo">Fixture demo</dt>
+      <dd {_i18n_attrs(demo_value, demo_value_sv)}>{_e(demo_value)}</dd>
+      <span data-i18n data-en="Synthetic evidence only" data-sv="Endast syntetiskt underlag">Synthetic evidence only</span>
+    </div>
+  </dl>
+  <div class="boundary-notice today-boundary" data-tone="danger">
     <strong data-i18n data-en="Observe and review only." data-sv="Endast observation och granskning.">Observe and review only.</strong>
-    <span data-i18n data-en="This cockpit cannot approve itself or execute accounting actions. Any non-zero live counter above is a safety violation, never a success state." data-sv="Cockpiten kan inte godkänna sitt eget arbete eller utföra redovisningsåtgärder. Ett värde över noll i live-räknarna är ett säkerhetsfel, aldrig ett framgångsläge.">This cockpit cannot approve itself or execute accounting actions. Any non-zero live counter above is a safety violation, never a success state.</span>
+    <span data-i18n data-en="This cockpit cannot approve or execute accounting actions. Any non-zero live counter is a safety violation, never a success state." data-sv="Cockpiten kan inte godkänna eller utföra redovisningsåtgärder. Ett värde över noll i live-räknarna är ett säkerhetsfel, aldrig ett framgångsläge.">This cockpit cannot approve or execute accounting actions. Any non-zero live counter is a safety violation, never a success state.</span>
   </div>
   <details class="local-counts expert-only">
     <summary data-i18n data-en="Local evidence table counts" data-sv="Lokala tabellräknare för underlag">Local evidence table counts</summary>
@@ -830,7 +905,7 @@ def _render_automation_center() -> str:
         label_sv = {
             ProviderId.DETERMINISTIC: "Deterministiska redovisningskontroller",
             ProviderId.OLLAMA: "Ollama på den här enheten",
-            ProviderId.LOCAL_OPENAI_COMPATIBLE: "Lokal OpenAI-kompatibel anslutning",
+            ProviderId.LOCAL_OPENAI_COMPATIBLE: "LM Studio / lokal OpenAI-kompatibel anslutning",
             ProviderId.OPENAI: "OpenAI API",
             ProviderId.ANTHROPIC: "Anthropic API",
             ProviderId.GEMINI: "Google Gemini API",
@@ -847,9 +922,12 @@ def _render_automation_center() -> str:
         if manifest.provider_id is ProviderId.DETERMINISTIC:
             availability = "Built in"
             availability_sv = "Inbyggd"
-        elif manifest.provider_id is ProviderId.OLLAMA:
+        elif manifest.provider_id is ProviderId.LOCAL_OPENAI_COMPATIBLE:
             availability = "Explicit local opt-in"
             availability_sv = "Uttryckligt lokalt medgivande"
+        elif manifest.provider_id is ProviderId.OLLAMA:
+            availability = "Explicit fallback adapter"
+            availability_sv = "Uttrycklig reservadapter"
         elif manifest.network_scope is NetworkScope.LOCALHOST_ONLY:
             availability = "Local adapter required"
             availability_sv = "Lokal adapter krävs"
@@ -958,6 +1036,76 @@ def _render_workflow(
 </section>""".strip()
 
 
+_REVIEW_SOURCE_OPTIONS = (
+    ("all", "All work", "Alla ärenden"),
+    ("supplier", "Supplier invoices", "Leverantörsfakturor"),
+    ("bank", "Bank transactions", "Banktransaktioner"),
+    ("other", "Other checks", "Övriga kontroller"),
+)
+
+
+def _review_source(source: str) -> str:
+    return {"supplier invoice": "supplier", "bank reconciliation": "bank"}.get(source, "other")
+
+
+def _render_case_details(item: PrioritizedReviewItem) -> str:
+    # Show each distinct check, including secondary risks on blocked cases.
+    context = item.context or ReviewContext()
+    primary_reason = _guided_review_reason(item)
+    checks = []
+    for category in item.categories:
+        if category not in {
+            "Changed bank details", "Uncertain VAT", "Duplicate risk", "Missing info",
+            "Supplier identity", "Missing bank details", "Ambiguous match", "Policy alignment warnings",
+            "Payment difference", "Incompatible match",
+        }:
+            continue
+        scoped = replace(item, mode="approval_required", categories=(category,))
+        en = _guided_review_reason(scoped)
+        sv = _guided_review_reason(scoped, swedish=True)
+        if en in primary_reason:
+            continue
+        checks.append(f'<li {_i18n_attrs(en, sv)}>{_e(en)}</li>')
+    if not checks and not context.facts and not context.candidates:
+        checks.append(f'<li {_i18n_attrs(_guided_review_reason(item), _guided_review_reason(item, swedish=True))}>{_e(_guided_review_reason(item))}</li>')
+    check_block = (
+        f'<p class="case-checks-label" {_i18n_attrs("Checks before reassessment", "Kontroller före ny bedömning")}>Checks before reassessment</p>'
+        f'<ul class="case-checklist">{"".join(checks)}</ul>'
+        if checks else ""
+    )
+    facts = ""
+    if context.facts:
+        fact_rows = "".join(
+            f'<div><dt {_i18n_attrs(fact.label, fact.label_sv)}>{_e(fact.label)}</dt>'
+            f'<dd {_i18n_attrs(fact.value, fact.value_sv)}>{_e(fact.value)}</dd></div>'
+            for fact in context.facts
+        )
+        facts = f'<dl class="case-facts">{fact_rows}</dl>'
+    candidates = ""
+    if context.candidates:
+        candidate_rows = "".join(
+            f'<tr><td>{_e(reference)}</td><td>{_e(score)}</td></tr>'
+            for reference, score in context.candidates
+        )
+        candidates = f"""
+        <table class="candidate-comparison">
+          <caption {_i18n_attrs('Tied candidates · none selected', 'Likvärdiga förslag · inget valt')}>Tied candidates · none selected</caption>
+          <thead><tr><th scope="col" {_i18n_attrs('Invoice', 'Faktura')}>Invoice</th><th scope="col" {_i18n_attrs('Match score', 'Matchningspoäng')}>Match score</th></tr></thead>
+          <tbody>{candidate_rows}</tbody>
+        </table>"""
+    identity = context.reference or context.party or item.title
+    return f"""
+        <details class="case-review-details">
+          <summary data-aria-label-en="{_e('Inspect case: ' + identity)}" data-aria-label-sv="{_e('Visa ärende: ' + identity)}" aria-label="{_e('Inspect case: ' + identity)}"><span {_i18n_attrs('Inspect case', 'Visa ärende')}>Inspect case</span></summary>
+          <div class="case-review-body">
+            {check_block}
+            {facts}
+            {candidates}
+            <p class="case-review-note" {_i18n_attrs('Read-only review. Opening this case does not approve it or change its status.', 'Skrivskyddad granskning. Ärendet godkänns inte och dess status ändras inte när du öppnar det.')}>Read-only review. Opening this case does not approve it or change its status.</p>
+          </div>
+        </details>"""
+
+
 def _render_review_queues(
     data: OperationsCockpitData,
     root: Path,
@@ -966,6 +1114,7 @@ def _render_review_queues(
     items = _prioritized_review_items(data.review_queues)
     rows = []
     for item in items:
+        context = item.context or ReviewContext()
         categories = " · ".join(item.categories)
         raw_reason = "; ".join(item.reasons)
         guided_reason = _guided_review_reason(item)
@@ -975,34 +1124,35 @@ def _render_review_queues(
             item.artifact_path,
             root,
             output,
-            "Open technical evidence",
-            "Öppna tekniskt underlag",
+            "Open evidence",
+            "Öppna underlag",
         )
-        evidence = (
-            '<span class="guided-only" data-i18n data-en="Evidence ready · open in Expert view" data-sv="Underlag klart · öppna i Expertläget">Evidence ready · open in Expert view</span>'
-            f'<span class="expert-only">{raw_evidence}</span>'
-            if raw_evidence
-            else ""
-        )
+        evidence = raw_evidence
         missing_evidence = (
             f'<span {_i18n_attrs("Evidence not generated", "Underlag saknas")}>'
             "Evidence not generated</span>"
         )
         search_text = " ".join(
-            (item.item_id, item.source, item.mode, item.severity, item.title, title_sv, categories, raw_reason, guided_reason, guided_reason_sv)
+            (item.item_id, item.source, item.mode, item.severity, item.title, title_sv, categories, raw_reason, guided_reason, guided_reason_sv, context.party, context.reference, context.amount, " ".join(reference for reference, _score in context.candidates), " ".join(f'{fact.label} {fact.label_sv} {fact.value} {fact.value_sv}' for fact in context.facts))
         ).lower()
         source_sv = _SOURCE_SV.get(item.source.title(), item.source.title())
         severity_sv = _SEVERITY_SV.get(item.severity, item.severity)
         rows.append(
             f"""
-    <li class="attention-row" data-severity="{_e(item.severity)}" data-search="{_e(search_text)}">
+    <li class="attention-row" data-severity="{_e(item.severity)}" data-source="{_review_source(item.source)}" data-search="{_e(search_text)}">
       <div class="attention-priority">
         <span class="severity" data-severity="{_e(item.severity)}" {_i18n_attrs(item.severity, severity_sv)}>{_e(item.severity)}</span>
         <span {_i18n_attrs(item.source.title(), source_sv)}>{_e(item.source.title())}</span>
       </div>
       <div class="attention-copy">
+        {f'<p class="review-party">{_e(context.party)}</p>' if context.party else ''}
         <h3 {_i18n_attrs(item.title, title_sv)}>{_e(item.title)}</h3>
-        <p {_i18n_attrs(guided_reason, guided_reason_sv)}>{_e(guided_reason)}</p>
+        {f'<p class="review-reference"><span {_i18n_attrs("Reference", "Referens")}>Reference</span> · {_e(context.reference)}</p>' if context.reference else ''}
+        <p class="attention-decision">
+          <span class="attention-decision-label" {_i18n_attrs('Next human decision', 'Nästa mänskliga beslut')}>Next human decision</span>
+          <span class="attention-decision-text" {_i18n_attrs(guided_reason, guided_reason_sv)}>{_e(guided_reason)}</span>
+        </p>
+        {_render_case_details(item)}
         <details class="expert-only">
           <summary {_i18n_attrs('Technical context', 'Teknisk kontext')}>Technical context</summary>
           <dl class="technical-context">
@@ -1013,31 +1163,40 @@ def _render_review_queues(
           </dl>
         </details>
       </div>
-      <div class="attention-action">{evidence or missing_evidence}</div>
+      <div class="attention-action">
+        {f'<strong class="review-amount" {_i18n_attrs(context.amount, context.amount.replace(",", chr(8239)).replace(".", ","))}>{_e(context.amount)}</strong>' if context.amount else ''}
+        <span class="attention-action-label" {_i18n_attrs('Evidence', 'Underlag')}>Evidence</span>{evidence or missing_evidence}
+      </div>
     </li>"""
         )
     content = (
         f'<ol class="attention-list" id="attention-list">{"".join(rows)}</ol>'
         if rows
-        else f'<p class="empty-state" {_i18n_attrs("No current items found in local artifacts.", "Inga aktuella ärenden hittades i lokala filer.")}>No current items found in local artifacts.</p>'
+        else f'<p class="empty-state" {_i18n_attrs("No review cases are waiting. The local snapshot has no exceptions requiring a human decision.", "Inga granskningsärenden väntar. Den lokala ögonblicksbilden innehåller inga undantag som kräver ett mänskligt beslut.")}>No review cases are waiting. The local snapshot has no exceptions requiring a human decision.</p>'
     )
-    return f"""
-<section class="workbench-section" id="review" aria-labelledby="review-title">
-  <div class="section-heading">
-    <div>
-      <h2 id="review-title" data-i18n data-en="Review" data-sv="Granskning">Review</h2>
-      <p data-i18n data-en="One row per case. Repeated risk signals are combined, and the most serious stop condition determines priority." data-sv="En rad per ärende. Upprepade risksignaler slås samman och det allvarligaste stoppvillkoret avgör prioriteten.">One row per case. Repeated risk signals are combined, and the most serious stop condition determines priority.</p>
-    </div>
-    <p class="result-count" id="review-result-count" aria-live="polite">{len(items)} items shown</p>
-  </div>
+    review_noun = "review case" if len(items) == 1 else "review cases"
+    result_count = (
+        f'<p class="result-count" id="review-result-count" aria-live="polite" '
+        f'data-total="{len(items)}">Showing {len(items)} of {len(items)} {review_noun}</p>'
+    )
+    source_buttons = "".join(
+        f'<button type="button" class="review-source-button" data-review-source="{key}" aria-pressed="{"true" if key == "all" else "false"}" aria-controls="attention-list review-empty"><span {_i18n_attrs(en, sv)}>{en}</span><span class="source-count">{count}</span></button>'
+        for key, en, sv in _REVIEW_SOURCE_OPTIONS
+        if (count := sum(key == "all" or _review_source(item.source) == key for item in items))
+    )
+    review_controls = (
+        f"""
+  <div class="review-toolbar">
+    {result_count}
+    <div class="review-source-filters" role="group" aria-label="Type of work" data-aria-label-en="Type of work" data-aria-label-sv="Typ av ärende">{source_buttons}</div>
   <div class="review-filters" aria-label="Review filters" data-aria-label-en="Review filters" data-aria-label-sv="Granskningsfilter">
     <label class="search-field">
       <span data-i18n data-en="Search review work" data-sv="Sök granskningsarbete">Search review work</span>
-      <input id="review-search" type="search" autocomplete="off" placeholder="Supplier, VAT, duplicate, bank…" data-placeholder-en="Supplier, VAT, duplicate, bank…" data-placeholder-sv="Leverantör, moms, dubblett, bank…">
+      <input id="review-search" type="search" autocomplete="off" aria-controls="attention-list review-empty" aria-describedby="review-result-count" placeholder="Supplier, VAT, duplicate, bank…" data-placeholder-en="Supplier, VAT, duplicate, bank…" data-placeholder-sv="Leverantör, moms, dubblett, bank…">
     </label>
     <label class="field-control">
       <span data-i18n data-en="Priority" data-sv="Prioritet">Priority</span>
-      <select id="review-severity">
+      <select id="review-severity" aria-controls="attention-list review-empty" aria-describedby="review-result-count">
         <option value="all" data-i18n data-en="All priorities" data-sv="Alla prioriteter">All priorities</option>
         <option value="critical" data-i18n data-en="Critical" data-sv="Kritisk">Critical</option>
         <option value="high" data-i18n data-en="High" data-sv="Hög">High</option>
@@ -1046,10 +1205,29 @@ def _render_review_queues(
       </select>
     </label>
   </div>
+  <div class="active-review-filters" id="active-review-filters" hidden>
+    <span data-i18n data-en="Active filters" data-sv="Aktiva filter">Active filters</span>
+    <div class="active-review-filter-chips" id="active-review-filter-chips"></div>
+    <button class="secondary-button" id="clear-active-review-filters" type="button" data-i18n data-en="Clear all" data-sv="Rensa alla">Clear all</button>
+  </div>
+  </div>
   <div class="empty-state review-empty" id="review-empty" hidden>
     <span data-i18n data-en="No review items match these filters." data-sv="Inga granskningsärenden matchar filtren.">No review items match these filters.</span>
     <button class="secondary-button" id="clear-review-filters" type="button" data-i18n data-en="Clear filters" data-sv="Rensa filter">Clear filters</button>
+  </div>"""
+        if items
+        else ""
+    )
+    return f"""
+<section class="workbench-section" id="review" aria-labelledby="review-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="review-title" data-i18n data-en="Review" data-sv="Granskning">Review</h2>
+      <p data-i18n data-en="One row per case. Repeated risk signals are combined, and the most serious stop condition determines priority." data-sv="En rad per ärende. Upprepade risksignaler slås samman och det allvarligaste stoppvillkoret avgör prioriteten.">One row per case. Repeated risk signals are combined, and the most serious stop condition determines priority.</p>
+    </div>
+    {result_count if not items else ""}
   </div>
+  {review_controls}
   {content}
 </section>""".strip()
 
@@ -1346,6 +1524,7 @@ def _prioritized_review_items(
                     "reasons": [],
                     "categories": [],
                     "artifact_path": item.artifact_path,
+                    "context": item.context,
                 },
             )
             if _severity_rank(severity) < _severity_rank(str(current["severity"])):
@@ -1357,6 +1536,8 @@ def _prioritized_review_items(
                 current["categories"].append(queue.label)
             if current["artifact_path"] is None and item.artifact_path:
                 current["artifact_path"] = item.artifact_path
+            if current["context"] is None and item.context:
+                current["context"] = item.context
 
     prioritized = []
     for current in combined.values():
@@ -1372,6 +1553,7 @@ def _prioritized_review_items(
                 reasons=tuple(str(reason) for reason in current["reasons"]),
                 categories=categories,
                 artifact_path=current["artifact_path"],
+                context=current["context"],
             )
         )
     return tuple(
@@ -1395,6 +1577,11 @@ def _review_severity(mode: str, queue_key: str) -> str:
         "uncertain_vat",
         "duplicate_risk",
         "risky_suppliers",
+        "supplier_identity",
+        "missing_bank_details",
+        "ambiguous_match",
+        "incompatible_match",
+        "payment_difference",
     }:
         return "high"
     if mode == "approval_required" or queue_key in {
@@ -1420,6 +1607,16 @@ def _review_title(mode: str, categories: tuple[str, ...]) -> str:
         return "VAT treatment is uncertain"
     if "Duplicate risk" in category_set:
         return "Possible duplicate needs comparison"
+    if "Supplier identity" in category_set:
+        return "Supplier identity needs verification"
+    if "Missing bank details" in category_set:
+        return "Payment details are incomplete"
+    if "Ambiguous match" in category_set:
+        return "Several invoices match this payment"
+    if "Incompatible match" in category_set:
+        return "Payment and open item are not comparable"
+    if "Payment difference" in category_set:
+        return "Payment differs from the open amount"
     if mode == "escalation_required":
         return "Senior review is required"
     if "Missing info" in category_set:
@@ -1438,6 +1635,11 @@ _REVIEW_TITLE_SV = {
     "Evidence is missing": "Underlag saknas",
     "Policy engines disagree": "Policymotorerna är inte överens",
     "Human approval is required": "Mänskligt godkännande krävs",
+    "Supplier identity needs verification": "Leverantörens identitet behöver verifieras",
+    "Payment details are incomplete": "Betalningsuppgifterna är ofullständiga",
+    "Several invoices match this payment": "Flera fakturor matchar betalningen",
+    "Payment and open item are not comparable": "Betalningen och den öppna posten kan inte jämföras",
+    "Payment differs from the open amount": "Betalningen skiljer sig från det öppna beloppet",
 }
 
 _SEVERITY_SV = {
@@ -1466,6 +1668,15 @@ def _guided_review_reason(item: PrioritizedReviewItem, *, swedish: bool = False)
             if swedish
             else "A safety rule stops this action; it cannot continue in this build."
         )
+    if item.mode == "escalation_required":
+        requirement = (
+            "En senior redovisningskunnig person måste granska ärendet. "
+            if swedish
+            else "A senior accountant must review this case. "
+        )
+        return requirement + _guided_review_reason(
+            replace(item, mode="approval_required"), swedish=swedish
+        )
     if "Changed bank details" in category_set:
         return (
             "Verifiera leverantörens betalningsuppgifter via en oberoende kanal innan arbetet fortsätter."
@@ -1484,6 +1695,36 @@ def _guided_review_reason(item: PrioritizedReviewItem, *, swedish: bool = False)
             if swedish
             else "Compare the records and confirm whether this is a duplicate before any draft continues."
         )
+    if "Supplier identity" in category_set:
+        return (
+            "Kontrollera organisationsnummer och leverantörsregister. Ett matchande namn räcker inte."
+            if swedish
+            else "Check the organisation number against the supplier registry. A matching name is not enough."
+        )
+    if "Missing bank details" in category_set:
+        return (
+            "Komplettera och verifiera betalningsuppgifterna på fakturan och i leverantörsregistret."
+            if swedish
+            else "Supply and verify payment details on both the invoice and supplier record."
+        )
+    if "Ambiguous match" in category_set:
+        return (
+            "Jämför fakturorna med betalningsunderlaget. Inget matchningsförslag har valts automatiskt."
+            if swedish
+            else "Compare the invoices with the payment evidence. No match has been selected automatically."
+        )
+    if "Incompatible match" in category_set:
+        return (
+            "Verifiera valuta och betalningsriktning. Jämför inte belopp mellan olika valutor utan styrkt valutakurs."
+            if swedish
+            else "Verify currency and payment direction. Do not compare amounts across currencies without exchange-rate evidence."
+        )
+    if "Payment difference" in category_set:
+        return (
+            "Jämför betalningen med det öppna beloppet. Bekräfta hur delbetalningen eller mellanskillnaden ska hanteras; inget saldo har uppdaterats."
+            if swedish
+            else "Compare the payment with the open amount. Confirm the partial payment or difference treatment; no balance has been updated."
+        )
     if "Missing info" in category_set:
         return (
             "Komplettera eller verifiera det saknade underlaget innan arbetet fortsätter."
@@ -1495,12 +1736,6 @@ def _guided_review_reason(item: PrioritizedReviewItem, *, swedish: bool = False)
             "En ansvarig granskare måste lösa policykonflikten innan något utkast fortsätter."
             if swedish
             else "An accountable reviewer must resolve the policy conflict before any draft continues."
-        )
-    if item.mode == "escalation_required":
-        return (
-            "En senior redovisningskunnig person måste klassificera transaktionen och verifiera förslaget."
-            if swedish
-            else "A senior accountant must classify the transaction and verify the proposal."
         )
     return (
         "En mänsklig granskare måste godkänna, avvisa eller omfördela förslaget."
@@ -1647,7 +1882,13 @@ def _collect_review_items(
         "changed_bank_details": [],
         "uncertain_vat": [],
         "policy_alignment_warnings": [],
+        "supplier_identity": [],
+        "missing_bank_details": [],
+        "ambiguous_match": [],
+        "payment_difference": [],
+        "incompatible_match": [],
     }
+    contexts: dict[tuple[str, str], ReviewContext] = {}
 
     for case in supplier_cases:
         summary = case["summary"]
@@ -1657,6 +1898,15 @@ def _collect_review_items(
         mode = str(summary.get("execution_gate_mode") or _nested(packet, "policy_decision", "mode") or "unknown")
         artifact = _rel_to_root(case.get("packet_path"), root)
         source = "supplier invoice"
+        extracted = packet.get("extracted_fields") or {}
+        contexts[(source, case_id)] = ReviewContext(
+            party=str(extracted.get("supplier_name") or ""),
+            reference=str(extracted.get("invoice_number") or ""),
+            amount=_review_amount(
+                _nested(extracted, "amounts", "gross"), extracted.get("currency")
+            ),
+            facts=_supplier_review_facts(extracted),
+        )
 
         _append_by_mode(queues, mode, case_id, source, _mode_reason(packet, summary), artifact)
 
@@ -1665,6 +1915,14 @@ def _collect_review_items(
         bank_status = str(_nested(packet, "supplier_match", "bank_details_status") or "")
         duplicate_status = str(_nested(packet, "duplicate_check", "status") or "")
         vat_status = str(_nested(packet, "vat_proposal", "status") or "")
+        if "supplier_identity_conflict" in flags or (supplier_status and supplier_status != "matched"):
+            queues["supplier_identity"].append(
+                ReviewItem(case_id, source, mode, "Supplier identity has not been confirmed.", artifact)
+            )
+        if "missing_bank_details" in flags:
+            queues["missing_bank_details"].append(
+                ReviewItem(case_id, source, mode, "Invoice or registry payment details are missing.", artifact)
+            )
         if supplier_status and supplier_status != "matched":
             queues["risky_suppliers"].append(
                 ReviewItem(case_id, source, mode, f"{scenario}: supplier status {supplier_status}", artifact)
@@ -1719,7 +1977,45 @@ def _collect_review_items(
             for flag in _nested(proposal, "risk", "flags", default=())
             if isinstance(flag, dict)
         }
-        if flags & {"unknown_transaction", "unusual_transaction", "low_match_confidence"} or proposal.get("selected_candidate") is None:
+        transaction = proposal.get("transaction") or {}
+        candidates = proposal.get("candidates") or []
+        tied = (
+            tuple(
+                (str(candidate.get("target_id") or ""), _review_score(candidate.get("confidence")))
+                for candidate in candidates
+                if isinstance(candidate, dict)
+                and candidate.get("confidence") == candidates[0].get("confidence")
+            )
+            if "ambiguous_match" in flags and candidates and isinstance(candidates[0], dict)
+            else ()
+        )
+        contexts[(source, case_id)] = ReviewContext(
+            party=str(transaction.get("counterparty") or ""),
+            reference=str(transaction.get("reference") or ""),
+            amount=_review_amount(transaction.get("amount_minor"), transaction.get("currency"), minor=True),
+            candidates=tied,
+            facts=_bank_review_facts(proposal),
+        )
+        if flags & {"currency_mismatch", "direction_mismatch"}:
+            queues["incompatible_match"].append(
+                ReviewItem(case_id, source, mode, "Currency or payment direction differs from the proposed open item.", artifact)
+            )
+        if flags & {"partial_payment", "small_amount_delta", "amount_mismatch"}:
+            queues["payment_difference"].append(
+                ReviewItem(case_id, source, mode, "Payment amount differs from the proposed open amount.", artifact)
+            )
+        if "ambiguous_match" in flags:
+            queues["ambiguous_match"].append(
+                ReviewItem(case_id, source, mode, "Equally strong candidates require a human comparison.", artifact)
+            )
+        if "ambiguous_match" not in flags and (
+            flags & {"unknown_transaction", "unusual_transaction"}
+            or (
+                "low_match_confidence" in flags
+                and not flags & {"partial_payment", "small_amount_delta", "amount_mismatch", "currency_mismatch", "direction_mismatch"}
+            )
+            or proposal.get("selected_candidate") is None
+        ):
             queues["missing_info"].append(
                 ReviewItem(case_id, source, mode, "Classify transaction or supply better match evidence.", artifact)
             )
@@ -1742,7 +2038,86 @@ def _collect_review_items(
         queues["policy_alignment_warnings"].append(
             ReviewItem(item_id, "policy alignment", "warning", reason, None)
         )
-    return queues
+    return {
+        key: [replace(item, context=contexts.get((item.source, item.item_id))) for item in items]
+        for key, items in queues.items()
+    }
+
+
+def _review_amount(value: Any, currency: Any, *, minor: bool = False) -> str:
+    """Display exact stored money; invalid or absent evidence stays unavailable."""
+    try:
+        amount = Money(value, currency) if minor else Money.from_major(value, currency)
+        digits = get_currency_spec(amount.currency).minor_units
+        return f"{amount.major:,.{digits}f} {amount.currency}"
+    except (ValueError, TypeError, DecimalException):
+        return ""
+
+
+def _review_score(value: Any) -> str:
+    try:
+        score = Decimal(str(value))
+        if score.is_finite() and 0 <= score <= 1:
+            return f"{score * 100:.0f}%"
+    except (ValueError, DecimalException):
+        pass
+    return "—"
+
+
+def _amount_fact(label: str, label_sv: str, value: Any, currency: Any, *, minor: bool = False) -> ReviewFact:
+    formatted = _review_amount(value, currency, minor=minor)
+    return ReviewFact(
+        label, label_sv, formatted or "Missing or invalid",
+        formatted.replace(",", chr(8239)).replace(".", ",") if formatted else "Saknas eller är ogiltigt",
+    )
+
+
+def _supplier_review_facts(extracted: dict[str, Any]) -> tuple[ReviewFact, ...]:
+    currency = extracted.get("currency")
+    amounts = extracted.get("amounts") or {}
+    facts = [
+        _amount_fact(label, label_sv, amounts.get(key), currency)
+        for key, label, label_sv in (
+            ("net", "Net amount", "Nettobelopp"),
+            ("vat", "VAT amount", "Momsbelopp"),
+            ("gross", "Invoice total", "Fakturabelopp"),
+        )
+    ]
+    for key, label, label_sv in (
+        ("invoice_date", "Invoice date", "Fakturadatum"),
+        ("due_date", "Due date", "Förfallodatum"),
+    ):
+        value = str(extracted.get(key) or "")
+        facts.append(ReviewFact(label, label_sv, value or "Missing", value or "Saknas"))
+    return tuple(facts)
+
+
+def _bank_review_facts(proposal: dict[str, Any]) -> tuple[ReviewFact, ...]:
+    transaction = proposal.get("transaction") or {}
+    target = proposal.get("selected_target") or {}
+    reference = str(target.get("reference") or target.get("target_id") or "")
+    facts = [
+        ReviewFact("Proposed match", "Föreslagen matchning", reference or "None selected", reference or "Inget valt"),
+        _amount_fact("Bank amount", "Bankbelopp", transaction.get("amount_minor"), transaction.get("currency"), minor=True),
+    ]
+    if not target:
+        return tuple(facts)
+    facts.append(_amount_fact("Open amount", "Öppet belopp", target.get("expected_amount_minor"), target.get("currency"), minor=True))
+    try:
+        payment = Money(transaction.get("amount_minor"), transaction.get("currency"))
+        outstanding = Money(target.get("expected_amount_minor"), target.get("currency"))
+        if payment.currency != outstanding.currency or payment.minor * outstanding.minor <= 0:
+            raise ValueError("Amounts are not comparable")
+        difference = abs(outstanding.minor) - abs(payment.minor)
+        label, label_sv = (
+            ("Remaining if matched", "Kvar om matchningen godkänns")
+            if difference >= 0
+            else ("Payment exceeds open amount by", "Betalningen överstiger öppet belopp med")
+        )
+        facts.append(_amount_fact(label, label_sv, abs(difference), payment.currency, minor=True))
+    except (ValueError, TypeError, DecimalException):
+        facts.append(ReviewFact("Amount comparison", "Beloppsjämförelse", "Not comparable", "Kan inte jämföras"))
+    return tuple(facts)
 
 
 def _build_review_queues(review_items: dict[str, list[ReviewItem]]) -> tuple[ReviewQueue, ...]:
@@ -1756,6 +2131,11 @@ def _build_review_queues(review_items: dict[str, list[ReviewItem]]) -> tuple[Rev
         ("changed_bank_details", "Changed bank details"),
         ("uncertain_vat", "Uncertain VAT"),
         ("policy_alignment_warnings", "Policy alignment warnings"),
+        ("supplier_identity", "Supplier identity"),
+        ("missing_bank_details", "Missing bank details"),
+        ("ambiguous_match", "Ambiguous match"),
+        ("payment_difference", "Payment difference"),
+        ("incompatible_match", "Incompatible match"),
     )
     return tuple(
         ReviewQueue(
@@ -2364,13 +2744,13 @@ kbd {
   color: var(--color-line-strong);
 }
 .environment-inner .boundary-state { color: var(--color-warning-soft); font-weight: 700; }
-.app-header { padding-block: var(--space-md) var(--space-lg); }
+.app-header { padding-block: var(--space-sm) var(--space-md); }
 .nav-edge {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
-  padding-block-end: var(--space-lg);
+  padding-block-end: var(--space-sm);
 }
 .wordmark {
   display: inline-flex;
@@ -2418,10 +2798,18 @@ kbd {
 }
 .header-copy p {
   max-width: 68ch;
-  margin: var(--space-md) 0 0;
+  margin: var(--space-sm) 0 0;
   color: var(--color-ink-muted);
   font-size: var(--text-base);
 }
+.header-review-action a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  color: var(--color-accent-strong);
+  font-weight: 700;
+}
+.header-meta { min-width: 0; }
 .workspace-preferences {
   margin-block-start: var(--space-sm);
   border-block: var(--rule-thin) solid var(--color-line);
@@ -2503,13 +2891,29 @@ input[type="search"]::placeholder { color: var(--color-ink-muted); }
   border-block: var(--rule-thin) solid var(--color-line);
   background: var(--color-surface);
 }
+.section-jump {
+  display: grid;
+  gap: var(--space-2xs);
+  width: min(calc(100% - (var(--space-md) * 2)), 78rem);
+  margin-inline: auto;
+  padding-block: var(--space-sm);
+}
+.section-jump label {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+.section-jump select {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-thin) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
 .section-nav-inner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-lg);
-  overflow-x: auto;
-  padding-block: var(--space-xs);
-  scrollbar-width: thin;
+  display: none;
 }
 .section-nav a {
   display: inline-flex;
@@ -2555,12 +2959,43 @@ main.shell { padding-block: var(--space-sm) var(--space-3xl); }
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
-.stat-strip {
+.today-priority {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-block: var(--rule-thin) solid var(--color-line-strong);
+  background: var(--color-surface);
+}
+.today-priority[data-tone="danger"] { border-block-start-color: var(--color-danger); }
+.today-priority[data-tone="safe"] { border-block-start-color: var(--color-safe); }
+.today-priority-count, .today-run-state { min-width: 0; }
+.today-priority-label, .today-run-state > span { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 700; }
+.today-priority-value { display: block; margin-block: var(--space-2xs); color: var(--color-danger); font-family: var(--font-display); font-size: var(--text-xl); }
+.today-priority[data-tone="safe"] .today-priority-value { color: var(--color-safe); }
+.today-priority-count p, .today-run-state p { margin: var(--space-2xs) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
+.today-run-state > strong { display: block; margin-block-start: var(--space-2xs); font-size: var(--text-base); }
+.today-run-state[data-tone="safe"] > strong { color: var(--color-safe); }
+.today-run-state[data-tone="warning"] > strong { color: var(--color-warning); }
+.today-priority-action { align-self: center; }
+.today-review-action {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  color: var(--color-accent-strong);
+  font-weight: 700;
+}
+.today-priority-empty { color: var(--color-safe); font-weight: 700; }
+.today-heartbeat { margin-block-start: var(--space-md); }
+.today-heartbeat-heading { display: grid; gap: var(--space-2xs); }
+.today-heartbeat-heading h3 { margin: 0; font-family: var(--font-display); font-size: var(--text-base); }
+.today-heartbeat-heading p { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
+.safety-stat-strip, .today-secondary {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  margin: 0;
+  margin: var(--space-sm) 0 0;
   border-block-start: var(--rule-thin) solid var(--color-line);
 }
+.today-secondary { margin-block-start: var(--space-sm); }
 .stat {
   min-width: 0;
   padding: var(--space-md) 0;
@@ -2572,6 +3007,7 @@ main.shell { padding-block: var(--space-sm) var(--space-3xl); }
 .stat[data-tone="safe"] dd { color: var(--color-safe); }
 .stat[data-tone="warning"] dd { color: var(--color-warning); }
 .stat[data-tone="danger"] dd { color: var(--color-danger); }
+.today-boundary { margin-block-start: var(--space-md); padding: var(--space-sm) var(--space-md); }
 .boundary-notice {
   display: grid;
   gap: var(--space-sm);
@@ -2599,7 +3035,42 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
 .ledger-counts div { display: flex; justify-content: space-between; gap: var(--space-xs); padding: var(--space-xs); border-block-start: var(--rule-thin) solid var(--color-line); }
 .ledger-counts dt { color: var(--color-ink-muted); }
 .ledger-counts dd { margin: 0; font-weight: 700; }
+.review-toolbar {
+  margin-block-end: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--rule-thin) solid var(--color-line);
+  background: var(--color-surface);
+}
+.review-toolbar .result-count { margin: 0 0 var(--space-sm); color: var(--color-ink-muted); font-size: var(--text-sm); }
+.review-toolbar .active-review-filters { margin-block-end: 0; }
+.review-source-filters { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-block-end: var(--space-md); }
+.review-source-button {
+  display: inline-flex; align-items: center; gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-thin) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-ink-muted);
+  font-size: var(--text-sm); font-weight: 600;
+}
+.review-source-button[aria-pressed="true"] { background: var(--color-ink); color: var(--color-surface); border-color: var(--color-ink); }
+.source-count { font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .review-filters { display: grid; gap: var(--space-md); margin-block-end: var(--space-md); }
+.active-review-filters { flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); margin-block-end: var(--space-md); }
+.active-review-filters:not([hidden]) { display: flex; }
+.active-review-filter-chips { display: flex; flex: 1 1 16rem; flex-wrap: wrap; gap: var(--space-xs); }
+.review-filter-chip, #clear-active-review-filters {
+  display: inline-flex;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-thin) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+}
 .attention-list, .workflow-sequence, .agent-pipeline,
 .narrative-sequence, .control-sequence, .automation-sequence {
   margin: 0;
@@ -2609,11 +3080,20 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
 .attention-list { border-block-start: var(--rule-thin) solid var(--color-line); }
 .attention-row {
   display: grid;
-  gap: var(--space-sm);
-  padding-block: var(--space-lg);
+  min-width: 0;
+  gap: var(--space-md);
+  padding-block: var(--space-md);
   border-block-end: var(--rule-thin) solid var(--color-line);
+  border-inline-start: var(--rule-heavy) solid var(--color-line-strong);
+  padding-inline-start: var(--space-md);
 }
-.attention-priority { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-ink-muted); font-size: var(--text-sm); }
+.attention-row[data-severity="critical"] { border-inline-start-color: var(--color-danger); }
+.attention-row[data-severity="high"] { border-inline-start-color: var(--color-warning); }
+.attention-row[data-severity="medium"] { border-inline-start-color: var(--color-accent); }
+.attention-row[data-severity="low"] { border-inline-start-color: var(--color-line-strong); }
+.attention-row:focus-within { background: var(--color-accent-soft); }
+.attention-priority, .attention-copy, .attention-action { min-width: 0; }
+.attention-priority { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); color: var(--color-ink-muted); font-size: var(--text-sm); }
 .severity { display: inline-flex; min-height: 1.5rem; align-items: center; padding-inline: var(--space-xs); border-block-end: var(--rule-heavy) solid var(--color-line-strong); font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; }
 .severity[data-severity="critical"] { border-color: var(--color-danger); color: var(--color-danger); }
 .severity[data-severity="high"] { border-color: var(--color-warning); color: var(--color-warning); }
@@ -2629,20 +3109,44 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
   margin: var(--space-2xs) 0 0;
   color: var(--color-ink-muted);
 }
+.attention-copy .attention-decision { display: grid; gap: var(--space-2xs); margin-block-start: var(--space-sm); }
+.attention-copy .review-party { margin: 0 0 var(--space-2xs); color: var(--color-ink); font-size: var(--text-lg); font-weight: 650; overflow-wrap: anywhere; }
+.attention-copy .review-reference { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.review-amount { color: var(--color-ink); font-size: var(--text-lg); font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.case-review-details { border-block-start: var(--rule-thin) solid var(--color-line); }
+.case-review-details > summary { justify-content: space-between; gap: var(--space-sm); cursor: pointer; font-weight: 650; }
+.case-review-details > summary::after { content: "+"; font-size: var(--text-lg); }
+.case-review-details[open] > summary::after { content: "−"; }
+.case-review-body { padding: var(--space-md); border: var(--rule-thin) solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); }
+.case-review-body .case-checks-label { margin: 0; color: var(--color-ink); font-size: var(--text-sm); font-weight: 650; }
+.case-checklist { padding-inline-start: var(--space-lg); margin: var(--space-xs) 0; font-size: var(--text-sm); }
+.case-checklist li + li { margin-block-start: var(--space-xs); }
+.case-facts { margin: var(--space-md) 0 0; font-size: var(--text-sm); }
+.case-facts:first-child { margin-block-start: 0; }
+.case-facts > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-md); padding-block: var(--space-xs); border-block-end: var(--rule-thin) solid var(--color-line); }
+.case-facts dt { color: var(--color-ink-muted); overflow-wrap: anywhere; }
+.case-facts dd { margin: 0; text-align: end; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.case-review-body .case-review-note { margin-block-start: var(--space-md); padding-block-start: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-line); font-size: var(--text-xs); }
+.candidate-comparison { width: 100%; margin-block-start: var(--space-md); border-collapse: collapse; font-size: var(--text-sm); }
+.candidate-comparison caption { text-align: start; color: var(--color-ink); font-weight: 650; margin-block-end: var(--space-xs); }
+.candidate-comparison th, .candidate-comparison td { padding: var(--space-xs); text-align: start; border-block-end: var(--rule-thin) solid var(--color-line); overflow-wrap: anywhere; }
+.candidate-comparison th:last-child, .candidate-comparison td:last-child { text-align: end; }
+.attention-decision-label, .attention-action-label { color: var(--color-ink); font-size: var(--text-xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.attention-decision-text { min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-muted); }
 .attention-copy details { margin-block-start: var(--space-xs); }
 .attention-copy details summary { display: flex; min-height: 2.75rem; align-items: center; padding: var(--space-2xs) 0; color: var(--color-accent-strong); font-size: var(--text-sm); }
 .technical-context { display: grid; gap: var(--space-xs); margin: var(--space-xs) 0 0; }
 .technical-context div { display: grid; gap: var(--space-2xs); }
 .technical-context dt { color: var(--color-ink-muted); }
 .technical-context dd { margin: 0; overflow-wrap: anywhere; }
-.attention-action { align-self: center; font-size: var(--text-sm); }
+.attention-action { display: grid; gap: var(--space-2xs); align-self: start; font-size: var(--text-sm); }
 .attention-action a, .step-meta a, .artifact-open, .section-action a {
   display: inline-flex;
   min-height: 2.75rem;
   align-items: center;
   white-space: nowrap;
 }
-.attention-action span { color: var(--color-ink-muted); }
+.attention-action > span:not(.attention-action-label) { color: var(--color-ink-muted); }
 .empty-state { margin: 0; padding: var(--space-xl); border: var(--rule-thin) dashed var(--color-line-strong); color: var(--color-ink-muted); text-align: center; }
 .review-empty { align-items: center; justify-content: space-between; gap: var(--space-md); text-align: start; }
 .review-empty:not([hidden]) { display: flex; }
@@ -2749,26 +3253,28 @@ details[aria-disabled="true"] summary { cursor: not-allowed; opacity: 0.55; }
   .view-toggle label:hover span { background: var(--color-surface-strong); }
   .section-nav a:hover { color: var(--color-accent-strong); text-decoration: underline; }
   .dialog-close:hover, .secondary-button:hover, .command-listbox a:hover { background: var(--color-accent-soft); }
+  .attention-row:hover { background: var(--color-accent-soft); }
 }
 a:active, button:active { transform: translateY(var(--rule-thin)); }
 .environment-inner span:not(.boundary-state) { display: none; }
 .environment-inner { flex-wrap: nowrap; justify-content: space-between; }
 .environment-inner .boundary-state::before { display: none; }
-.header-copy h1 { font-size: clamp(2rem, 11vw, 3rem); }
+.header-copy h1 { font-size: clamp(1.75rem, 9vw, 2.5rem); }
 @media (min-width: 40rem) {
   .environment-inner span:not(.boundary-state) { display: inline; }
   .environment-inner { flex-wrap: wrap; justify-content: flex-start; }
   .environment-inner .boundary-state::before { display: inline; }
-  .header-copy h1 { font-size: var(--text-2xl); }
+  .header-copy h1 { font-size: var(--text-xl); }
   .generation-stamp { display: block; }
   .shell { width: min(calc(100% - (var(--space-xl) * 2)), 78rem); }
   .header-tools { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .command-trigger { min-width: 8.5rem; }
   .command-trigger > span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
   .view-toggle { grid-column: 1 / -1; }
-  .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .stat { padding: var(--space-md); border-inline-end: var(--rule-thin) solid var(--color-line); }
-  .stat:nth-child(2n) { border-inline-end: 0; }
+  .safety-stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .safety-stat-strip .stat { padding: var(--space-md); border-inline-end: var(--rule-thin) solid var(--color-line); }
+  .safety-stat-strip .stat:last-child { border-inline-end: 0; }
+  .today-secondary .stat { padding: var(--space-sm); }
   .review-filters { grid-template-columns: minmax(0, 1fr) minmax(11rem, 0.34fr); }
   .technical-context div { grid-template-columns: 7rem minmax(0, 1fr); gap: var(--space-sm); }
   .artifact-group summary, .artifact-list li { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
@@ -2777,20 +3283,51 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
   .footer-line { grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; }
 }
 @media (min-width: 60rem) {
-  .app-header { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr); gap: var(--space-xl) var(--space-3xl); }
-  .nav-edge { grid-column: 1 / -1; }
-  .workspace-preferences { margin: 0; align-self: start; }
+  .section-jump { display: none; }
+  .section-nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    overflow: visible;
+    padding-block: var(--space-xs);
+  }
+  .section-nav {
+    position: sticky;
+    inset-block-start: 2.75rem;
+    z-index: calc(var(--z-sticky) - 1);
+  }
+  .review-toolbar {
+    position: sticky;
+    inset-block-start: calc(2.75rem + 3.875rem);
+    z-index: calc(var(--z-sticky) - 2);
+  }
+  .workbench-section { scroll-margin-block-start: calc(2.75rem + 3.875rem + var(--space-sm)); }
+  .app-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.65fr);
+    grid-template-areas: "nav nav" "copy meta";
+    gap: var(--space-sm) var(--space-xl);
+  }
+  .nav-edge { grid-area: nav; padding-block-end: 0; }
+  .header-copy { grid-area: copy; min-width: 0; }
+  .header-meta { grid-area: meta; align-self: start; }
+  .workspace-preferences { margin: 0; }
   .header-tools { align-content: start; }
   .role-guidance, .role-boundary { margin-inline: 0; }
-  .header-copy p { font-size: var(--text-lg); }
-  .generation-stamp { grid-column: 1; grid-row: 3; align-self: end; }
+  .generation-stamp { margin-block-start: var(--space-xs); }
   .section-heading { grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-xl); }
-  .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .stat:nth-child(2n) { border-inline-end: var(--rule-thin) solid var(--color-line); }
-  .stat:nth-child(3n) { border-inline-end: 0; }
-  .attention-row { grid-template-columns: minmax(9rem, 0.26fr) minmax(0, 1fr) minmax(8rem, auto); gap: var(--space-lg); }
+  .today-priority {
+    grid-template-columns: minmax(8rem, 0.55fr) minmax(12rem, 1fr) minmax(12rem, auto);
+    grid-template-areas: "count run action";
+    align-items: center;
+  }
+  .today-priority-count { grid-area: count; }
+  .today-run-state { grid-area: run; }
+  .today-priority-action { grid-area: action; justify-self: end; }
+  .attention-row { grid-template-columns: minmax(8rem, 0.22fr) minmax(0, 1fr) minmax(10rem, 12rem); gap: var(--space-md); align-items: start; }
   .attention-priority { flex-direction: column; align-items: flex-start; }
-  .attention-action { text-align: end; }
+  .attention-action { overflow-wrap: anywhere; text-align: end; }
   .workflow-step, .narrative-step, .control-stage { grid-template-columns: 3rem minmax(0, 1fr) minmax(10rem, auto); }
   .step-meta, .narrative-step > strong, .control-stage > strong { grid-column: 3; text-align: end; }
   .automation-stage { grid-template-columns: 3rem minmax(0, 1fr); }
@@ -2836,8 +3373,9 @@ a:active, button:active { transform: translateY(var(--rule-thin)); }
   .command-dialog { background: var(--color-forced-canvas); color: var(--color-forced-text); }
 }
 @media print {
-  .environment-strip, .section-nav, .header-tools, .review-filters,
+  .environment-strip, .section-nav, .header-tools, .review-filters, .active-review-filters,
   .command-dialog, .skip-link, .command-trigger { display: none !important; }
+  .review-toolbar { position: static !important; }
   body { background: var(--color-surface); }
   .shell { width: 100%; }
   .app-header, .workbench-section { break-inside: avoid; padding-block: var(--space-md); }
@@ -2908,6 +3446,10 @@ _SCRIPT = r"""
       const text = resolved === "sv-SE" ? node.dataset.sv : node.dataset.en;
       if (text) node.textContent = text;
     });
+    document.querySelectorAll("#section-jump option[data-en]").forEach((option) => {
+      const text = resolved === "sv-SE" ? option.dataset.sv : option.dataset.en;
+      if (text) option.textContent = text;
+    });
     document.querySelectorAll("[data-placeholder-en]").forEach((node) => {
       node.setAttribute("placeholder", resolved === "sv-SE" ? node.dataset.placeholderSv : node.dataset.placeholderEn);
     });
@@ -2961,32 +3503,110 @@ _SCRIPT = r"""
   const reviewSearch = document.querySelector("#review-search");
   const reviewSeverity = document.querySelector("#review-severity");
   const reviewRows = [...document.querySelectorAll(".attention-row")];
+  const reviewSourceButtons = [...document.querySelectorAll("[data-review-source]")];
+  let reviewSource = "all";
   const reviewResultCount = document.querySelector("#review-result-count");
   const reviewEmpty = document.querySelector("#review-empty");
   const clearReviewFilters = document.querySelector("#clear-review-filters");
+  const activeReviewFilters = document.querySelector("#active-review-filters");
+  const activeReviewFilterChips = document.querySelector("#active-review-filter-chips");
+  const clearActiveReviewFilters = document.querySelector("#clear-active-review-filters");
+  const formatReviewCount = (visible, total, isSwedish) => {
+    if (isSwedish) {
+      const noun = total === 1 ? "granskningsärende" : "granskningsärenden";
+      return `Visar ${visible} av ${total} ${noun}`;
+    }
+    const noun = total === 1 ? "review case" : "review cases";
+    return `Showing ${visible} of ${total} ${noun}`;
+  };
+  const renderActiveReviewFilters = (query, severity, isSwedish) => {
+    if (!activeReviewFilters || !activeReviewFilterChips) return;
+    activeReviewFilterChips.replaceChildren();
+    const addChip = (text, ariaLabel, clearFilter) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "review-filter-chip";
+      chip.textContent = `${text} ×`;
+      chip.setAttribute("aria-label", ariaLabel);
+      chip.addEventListener("click", clearFilter);
+      activeReviewFilterChips.append(chip);
+    };
+    if (query) {
+      addChip(
+        isSwedish ? `Sök: ${query}` : `Search: ${query}`,
+        isSwedish ? `Rensa sökfilter: ${query}` : `Remove search filter: ${query}`,
+        () => {
+          if (reviewSearch) reviewSearch.value = "";
+          updateReviewResults();
+          reviewSearch?.focus();
+        },
+      );
+    }
+    if (severity !== "all") {
+      const selected = reviewSeverity?.selectedOptions[0];
+      const priority = selected
+        ? (isSwedish ? selected.dataset.sv : selected.dataset.en) || selected.textContent
+        : severity;
+      addChip(
+        isSwedish ? `Prioritet: ${priority}` : `Priority: ${priority}`,
+        isSwedish ? `Rensa prioritetsfilter: ${priority}` : `Remove priority filter: ${priority}`,
+        () => {
+          if (reviewSeverity) reviewSeverity.value = "all";
+          updateReviewResults();
+          reviewSeverity?.focus();
+        },
+      );
+    }
+    if (reviewSource !== "all") {
+      const sourceLabel = reviewSourceButtons.find((button) => button.dataset.reviewSource === reviewSource)?.querySelector("[data-i18n]");
+      const label = sourceLabel?.textContent || reviewSource;
+      addChip(
+        label,
+        isSwedish ? `Rensa ärendefilter: ${label}` : `Remove work type filter: ${label}`,
+        () => {
+          const button = reviewSourceButtons.find((item) => item.dataset.reviewSource === reviewSource);
+          reviewSource = "all";
+          updateReviewResults();
+          button?.focus();
+        },
+      );
+    }
+    activeReviewFilters.hidden = !(query || severity !== "all" || reviewSource !== "all");
+  };
   function updateReviewResults() {
     if (!reviewResultCount) return;
-    const query = reviewSearch ? reviewSearch.value.trim().toLocaleLowerCase() : "";
+    const rawQuery = reviewSearch ? reviewSearch.value.trim() : "";
+    const query = rawQuery.toLocaleLowerCase();
     const severity = reviewSeverity ? reviewSeverity.value : "all";
     let visible = 0;
     reviewRows.forEach((row) => {
       const matchesQuery = !query || row.dataset.search.includes(query);
       const matchesSeverity = severity === "all" || row.dataset.severity === severity;
-      row.hidden = !(matchesQuery && matchesSeverity);
+      const matchesSource = reviewSource === "all" || row.dataset.source === reviewSource;
+      row.hidden = !(matchesQuery && matchesSeverity && matchesSource);
       if (!row.hidden) visible += 1;
     });
     const isSwedish = localeSelect && localeSelect.value === "sv-SE";
-    reviewResultCount.textContent = isSwedish ? `${visible} poster visas` : `${visible} items shown`;
+    reviewResultCount.textContent = formatReviewCount(visible, reviewRows.length, isSwedish);
     if (reviewEmpty) reviewEmpty.hidden = visible !== 0;
+    reviewSourceButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.reviewSource === reviewSource)));
+    renderActiveReviewFilters(rawQuery, severity, isSwedish);
   }
-  reviewSearch?.addEventListener("input", updateReviewResults);
-  reviewSeverity?.addEventListener("change", updateReviewResults);
-  clearReviewFilters?.addEventListener("click", () => {
+  const resetReviewFilters = (focusSearch = true) => {
     if (reviewSearch) reviewSearch.value = "";
     if (reviewSeverity) reviewSeverity.value = "all";
+    reviewSource = "all";
     updateReviewResults();
-    reviewSearch?.focus();
-  });
+    if (focusSearch) reviewSearch?.focus();
+  };
+  reviewSearch?.addEventListener("input", updateReviewResults);
+  reviewSeverity?.addEventListener("change", updateReviewResults);
+  reviewSourceButtons.forEach((button) => button.addEventListener("click", () => {
+    reviewSource = button.dataset.reviewSource;
+    updateReviewResults();
+  }));
+  clearReviewFilters?.addEventListener("click", () => resetReviewFilters());
+  clearActiveReviewFilters?.addEventListener("click", () => resetReviewFilters());
 
   const trigger = document.querySelector("#command-trigger");
   const dialog = document.querySelector("#command-dialog");
@@ -3032,6 +3652,11 @@ _SCRIPT = r"""
 
   trigger?.addEventListener("click", openCommands);
   document.addEventListener("keydown", (event) => {
+    if (dialog?.open && event.key === "Escape") {
+      event.preventDefault();
+      closeCommands();
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
       event.preventDefault();
       openCommands();
@@ -3067,9 +3692,23 @@ _SCRIPT = r"""
   dialog?.addEventListener("close", () => trigger?.focus());
 
   const sectionLinks = [...document.querySelectorAll(".section-nav a[href^='#']")];
-  const markCurrentSection = (id) => sectionLinks.forEach((link) => {
-    if (link.getAttribute("href") === `#${id}`) link.setAttribute("aria-current", "page");
-    else link.removeAttribute("aria-current");
+  const sectionJump = document.querySelector("#section-jump");
+  const markCurrentSection = (id) => {
+    const hash = `#${id}`;
+    sectionLinks.forEach((link) => {
+      if (link.getAttribute("href") === hash) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+    if (sectionJump && [...sectionJump.options].some((option) => option.value === hash)) {
+      sectionJump.value = hash;
+    }
+  };
+  sectionJump?.addEventListener("change", () => {
+    const target = document.querySelector(sectionJump.value);
+    if (!target) return;
+    window.location.hash = sectionJump.value;
+    target.scrollIntoView({ block: "start" });
+    markCurrentSection(sectionJump.value.slice(1));
   });
   markCurrentSection((window.location.hash || "#today").slice(1));
   window.addEventListener("hashchange", () => markCurrentSection((window.location.hash || "#today").slice(1)));

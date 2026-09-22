@@ -13,7 +13,7 @@ dependencies = []
 accounting-agent = "accounting_agent.cli:main"
 
 [tool.setuptools.package-data]
-accounting_agent = ["static/*.css", "static/*.svg", "static/*.txt"]
+accounting_agent = ["static/*.css", "static/*.svg", "static/*.txt", "static/*.html", "static/*.js"]
 
 [tool.setuptools.packages.find]
 include = ["accounting_agent*"]

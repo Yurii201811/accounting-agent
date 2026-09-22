@@ -84,6 +84,7 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertIn("Bank reconciliation", html)
             self.assertIn('data-view="guided"', html)
             self.assertIn('id="command-dialog"', html)
+            self.assertIn('if (dialog?.open && event.key === "Escape") {', html)
             self.assertIn('id="review-search"', html)
             self.assertIn("NetSuite", html)
             self.assertIn("Oracle Fusion", html)
@@ -103,6 +104,149 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertIn('data-sv="Manifest för testkund"', html)
             self.assertIn('data-sv="full syntetisk månadskörning"', html)
             self.assertIn('data-sv="senaste lokala filen"', html)
+            self.assertIn('for="section-jump"', html)
+            self.assertIn(
+                'data-en="Jump to section" data-sv="Hoppa till sektion"', html
+            )
+            self.assertIn('<div class="shell section-nav-inner">', html)
+            section_jump = re.search(
+                r'<select id="section-jump">(.*?)</select>',
+                html,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(section_jump)
+            assert section_jump is not None
+            options = re.findall(
+                r'<option value="#[^"]+" data-en="[^"]+" data-sv="[^"]+"(?: class="expert-only")?>',
+                section_jump.group(1),
+            )
+            self.assertEqual(8, len(options))
+            self.assertIn(
+                '<option value="#setup" data-en="Start" data-sv="Start" class="expert-only">Start</option>',
+                section_jump.group(1),
+            )
+            today_start = html.index('<section class="workbench-section" id="today"')
+            today_end = html.index(
+                '<section class="workbench-section" id="review"', today_start
+            )
+            today_html = html[today_start:today_end]
+            self.assertLess(
+                today_html.index('class="today-priority"'),
+                today_html.index('class="today-heartbeat"'),
+            )
+            self.assertLess(
+                today_html.index('class="today-heartbeat"'),
+                today_html.index('class="today-secondary"'),
+            )
+            self.assertLess(
+                today_html.index('class="today-secondary"'),
+                today_html.index('class="boundary-notice today-boundary"'),
+            )
+            priority_count = html.count('class="attention-row"')
+            self.assertEqual(
+                priority_count,
+                html.count('data-en="Next human decision" data-sv="Nästa mänskliga beslut"'),
+            )
+            header_start = html.index('<header class="app-header shell">')
+            header_end = html.index("</header>", header_start)
+            header_html = html[header_start:header_end]
+            self.assertIn(
+                f'data-en="Review priority cases · {priority_count} →"',
+                header_html,
+            )
+            self.assertIn(
+                f'data-sv="Granska prioriterade ärenden · {priority_count} →"',
+                header_html,
+            )
+            self.assertIn(f'data-en="Review priority cases · {priority_count} →"', today_html)
+            self.assertIn(f'data-sv="Granska prioriterade ärenden · {priority_count} →"', today_html)
+            self.assertLess(
+                today_html.index('class="today-priority-count"'),
+                today_html.index('class="today-priority-action"'),
+            )
+            self.assertLess(
+                today_html.index('class="today-priority-action"'),
+                today_html.index('class="today-run-state"'),
+            )
+            self.assertEqual(
+                priority_count,
+                html.count(
+                    'class="attention-action-label" data-i18n data-en="Evidence" data-sv="Underlag"'
+                ),
+            )
+            self.assertEqual(
+                2,
+                html.count(
+                    'aria-controls="attention-list review-empty" aria-describedby="review-result-count"'
+                ),
+            )
+            self.assertIn(
+                '<div class="active-review-filters" id="active-review-filters" hidden>',
+                html,
+            )
+            self.assertIn(
+                'data-en="Active filters" data-sv="Aktiva filter"',
+                html,
+            )
+            self.assertIn(
+                '<div class="active-review-filter-chips" id="active-review-filter-chips"></div>',
+                html,
+            )
+            self.assertIn(
+                'id="clear-active-review-filters" type="button" data-i18n data-en="Clear all" data-sv="Rensa alla"',
+                html,
+            )
+            self.assertIn(
+                f'<p class="result-count" id="review-result-count" aria-live="polite" data-total="{priority_count}">Showing {priority_count} of {priority_count} review cases</p>',
+                html,
+            )
+            review_start = html.index(
+                '<section class="workbench-section" id="review"'
+            )
+            review_end = html.index("</section>", review_start)
+            review_html = html[review_start:review_end]
+            self.assertEqual(1, review_html.count('class="review-toolbar"'))
+            self.assertLess(
+                review_html.index('class="review-toolbar"'),
+                review_html.index('id="review-result-count"'),
+            )
+            self.assertLess(
+                review_html.index('id="review-result-count"'),
+                review_html.index('class="review-filters"'),
+            )
+            self.assertLess(
+                review_html.index('class="review-filters"'),
+                review_html.index('id="active-review-filters"'),
+            )
+            self.assertLess(
+                review_html.index('id="active-review-filters"'),
+                review_html.index('id="review-empty"'),
+            )
+            self.assertIn(
+                "</button>\n  </div>\n  </div>\n  <div class=\"empty-state review-empty\"",
+                review_html,
+            )
+            for script_contract in (
+                'const activeReviewFilters = document.querySelector("#active-review-filters");',
+                'const activeReviewFilterChips = document.querySelector("#active-review-filter-chips");',
+                'const clearActiveReviewFilters = document.querySelector("#clear-active-review-filters");',
+                'const noun = total === 1 ? "review case" : "review cases";',
+                'const noun = total === 1 ? "granskningsärende" : "granskningsärenden";',
+                'chip.className = "review-filter-chip";',
+                'reviewSearch?.focus();',
+                'reviewSeverity?.focus();',
+                'clearReviewFilters?.addEventListener("click", () => resetReviewFilters());',
+                'clearActiveReviewFilters?.addEventListener("click", () => resetReviewFilters());',
+            ):
+                self.assertIn(script_contract, html)
+            self.assertIsNone(
+                re.search(r'<li class="attention-row"[^>]*\btabindex=', html)
+            )
+            heartbeat_end = today_html.index('class="today-secondary"')
+            heartbeat_html = today_html[today_html.index('class="today-heartbeat"'):heartbeat_end]
+            for label in ("Live ERP calls", "Live Microsoft 365 calls", "Emails, payments, or filings"):
+                self.assertIn(f'data-en="{label}"', heartbeat_html)
+            self.assertEqual(3, heartbeat_html.count('data-en="Zero required"'))
             self.assertEqual(5, html.count('class="attention-row"'))
             self.assertNotIn("more items not shown", html)
             self.assertNotIn(str(root), html)
@@ -129,6 +273,64 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertIn("@media (hover: hover) and (pointer: fine)", page_css.group(1))
             self.assertRegex(
                 page_css.group(1),
+                r"\.section-jump \{\s*display: grid;[^}]*width: min\(calc\(100% - \(var\(--space-md\) \* 2\)\), 78rem\);",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"\.section-jump select \{\s*width: 100%;\s*min-height: 2\.75rem;",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"\.section-nav-inner \{\s*display: none;\s*\}",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"@media \(min-width: 60rem\) \{\s*\.section-jump \{ display: none; \}\s*\.section-nav-inner \{\s*display: flex;[^}]*overflow: visible;",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"\.section-nav \{\s*position: sticky;\s*inset-block-start: 2\.75rem;\s*z-index: calc\(var\(--z-sticky\) - 1\);",
+            )
+            self.assertIn(
+                ".workbench-section { scroll-margin-block-start: calc(2.75rem + 3.875rem + var(--space-sm)); }",
+                page_css.group(1),
+            )
+            toolbar_base = re.search(
+                r"\.review-toolbar \{([^}]*)\}",
+                page_css.group(1),
+                re.DOTALL,
+            )
+            self.assertIsNotNone(toolbar_base)
+            assert toolbar_base is not None
+            self.assertNotIn("position:", toolbar_base.group(1))
+            for declaration in (
+                "margin-block-end: var(--space-md);",
+                "padding: var(--space-sm) var(--space-md);",
+                "border: var(--rule-thin) solid var(--color-line);",
+                "background: var(--color-surface);",
+            ):
+                self.assertIn(declaration, toolbar_base.group(1))
+            desktop_css_start = page_css.group(1).index("@media (min-width: 60rem)")
+            desktop_css_end = page_css.group(1).index(
+                "@media (min-width: 90rem)", desktop_css_start
+            )
+            desktop_css = page_css.group(1)[desktop_css_start:desktop_css_end]
+            self.assertIn(
+                ".review-toolbar {\n    position: sticky;\n    inset-block-start: calc(2.75rem + 3.875rem);\n    z-index: calc(var(--z-sticky) - 2);\n  }",
+                desktop_css,
+            )
+            print_css = page_css.group(1)[page_css.group(1).index("@media print"):]
+            self.assertIn(
+                ".review-toolbar { position: static !important; }",
+                print_css,
+            )
+            self.assertIn(
+                ".review-filters, .active-review-filters,",
+                print_css,
+            )
+            self.assertIn('grid-template-areas: "count run action";', page_css.group(1))
+            self.assertRegex(
+                page_css.group(1),
                 r"\.wordmark \{\s*display: inline-flex;\s*min-width: 2\.75rem;\s*min-height: 2\.75rem;",
             )
             self.assertRegex(
@@ -138,6 +340,28 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertRegex(
                 page_css.group(1),
                 r"\.attention-copy details summary \{[^}]*min-height: 2\.75rem;",
+            )
+            self.assertRegex(
+                page_css.group(1),
+                r"\.review-filter-chip, #clear-active-review-filters \{[^}]*min-width: 2\.75rem;[^}]*min-height: 2\.75rem;",
+            )
+            for severity, color in (
+                ("critical", "danger"),
+                ("high", "warning"),
+                ("medium", "accent"),
+                ("low", "line-strong"),
+            ):
+                self.assertIn(
+                    f'.attention-row[data-severity="{severity}"] {{ border-inline-start-color: var(--color-{color}); }}',
+                    page_css.group(1),
+                )
+            self.assertIn(
+                ".attention-row:focus-within { background: var(--color-accent-soft); }",
+                page_css.group(1),
+            )
+            self.assertIn(
+                ".attention-row:hover { background: var(--color-accent-soft); }",
+                page_css.group(1),
             )
             _assert_offline_local_only(self, html)
 
@@ -157,7 +381,41 @@ class OperationsCockpitTests(unittest.TestCase):
             self.assertEqual(0, len(result.broken_links))
             self.assertEqual("not_ready_no_fake_client_run", result.data.local_readiness)
             self.assertEqual("not_ready_no_demo_run", result.data.demo_readiness)
-            self.assertIn("No current items found in local artifacts.", html)
+            self.assertIn(
+                '<option value="#setup" data-en="Start" data-sv="Start">Start</option>',
+                html,
+            )
+            self.assertNotIn(
+                '<option value="#setup" data-en="Start" data-sv="Start" class="expert-only">',
+                html,
+            )
+            today_start = html.index('<section class="workbench-section" id="today"')
+            today_end = html.index(
+                '<section class="workbench-section" id="review"', today_start
+            )
+            today_html = html[today_start:today_end]
+            self.assertIn(
+                'data-en="No priority cases pending review." data-sv="Inga prioriterade ärenden väntar på granskning."',
+                today_html,
+            )
+            self.assertNotIn('class="today-review-action"', today_html)
+            self.assertIn(
+                "No review cases are waiting. The local snapshot has no exceptions requiring a human decision.",
+                html,
+            )
+            self.assertIn(
+                'data-sv="Inga granskningsärenden väntar. Den lokala ögonblicksbilden innehåller inga undantag som kräver ett mänskligt beslut."',
+                html,
+            )
+            self.assertNotIn('id="review-search"', html)
+            self.assertNotIn('id="review-severity"', html)
+            self.assertNotIn('id="review-empty"', html)
+            self.assertNotIn('id="active-review-filters"', html)
+            self.assertNotIn('class="review-toolbar"', html)
+            self.assertIn(
+                '<p class="result-count" id="review-result-count" aria-live="polite" data-total="0">Showing 0 of 0 review cases</p>',
+                html,
+            )
             self.assertIn(
                 'data-sv="Inga lokala SQLite-köantal har hittats ännu."',
                 html,

@@ -23,6 +23,8 @@ from accounting_agent.model_runtime import (
     list_provider_manifests,
     local_model_endpoint,
     invoke_ollama_advisory,
+    invoke_local_openai_compatible_advisory,
+    local_openai_compatible_endpoint,
     plan_model_route,
     safe_synthetic_benchmark_suite,
     score_synthetic_benchmark,
@@ -65,6 +67,13 @@ class ProviderManifestTests(unittest.TestCase):
             self.assertFalse(manifest.can_approve)
             self.assertFalse(manifest.can_execute_accounting_actions)
             self.assertTrue(manifest.requires_deterministic_validation)
+
+        self.assertTrue(get_provider_manifest(ProviderId.LOCAL_OPENAI_COMPATIBLE).enabled_by_default)
+        self.assertFalse(get_provider_manifest(ProviderId.OLLAMA).enabled_by_default)
+        self.assertEqual(
+            get_provider_manifest(ProviderId.LOCAL_OPENAI_COMPATIBLE).invocation_mode,
+            "guarded_local_advisory",
+        )
 
     def test_hosted_manifests_are_disabled_and_have_no_runtime_invoker(self) -> None:
         for provider_id in (
@@ -380,6 +389,109 @@ class OllamaInvocationTests(unittest.TestCase):
                         endpoint=endpoint,
                         allow_local_invocation=True,
                     )
+
+
+class LocalOpenAICompatibleInvocationTests(unittest.TestCase):
+    def _response(self, content: str) -> _FakeResponse:
+        return _FakeResponse(
+            {
+                "model": "qwen3:4b",
+                "done": True,
+                "message": {"role": "assistant", "content": content},
+            }
+        )
+
+    def _openai_response(self, content: str) -> _FakeResponse:
+        return _FakeResponse(
+            {
+                "id": "chatcmpl-local",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": content},
+                    }
+                ],
+            }
+        )
+
+    def test_endpoint_is_lm_studio_default_and_strictly_loopback(self) -> None:
+        self.assertEqual(
+            local_openai_compatible_endpoint(),
+            "http://127.0.0.1:1234/v1",
+        )
+        self.assertEqual(
+            local_openai_compatible_endpoint("http://localhost:1234/v1/"),
+            "http://127.0.0.1:1234/v1",
+        )
+        for unsafe in (
+            "https://127.0.0.1:1234/v1",
+            "http://192.168.1.2:1234/v1",
+            "http://user:secret@127.0.0.1:1234/v1",
+            "http://127.0.0.1:1234",
+            "http://127.0.0.1:1234/v1/chat/completions",
+        ):
+            with self.subTest(endpoint=unsafe):
+                with self.assertRaises(ValueError):
+                    local_openai_compatible_endpoint(unsafe)
+
+    def test_primary_invocation_uses_openai_compatible_json_contract(self) -> None:
+        calls: list[tuple[object, float]] = []
+
+        def opener(request: object, *, timeout: float) -> _FakeResponse:
+            calls.append((request, timeout))
+            return self._openai_response('{"decision":"block_review","can_execute":false}')
+
+        result = invoke_local_openai_compatible_advisory(
+            request_id="lm-studio-1",
+            model_id="local-accounting-model",
+            purpose=ModelPurpose.CLASSIFICATION,
+            data_classification=DataClassification.CONFIDENTIAL_ACCOUNTING,
+            prompt="Classify the supplied accounting facts.",
+            allow_local_invocation=True,
+            timeout_seconds=999,
+            opener=opener,
+        )
+
+        self.assertEqual(result.output.provider_id, ProviderId.LOCAL_OPENAI_COMPATIBLE)
+        self.assertEqual(result.payload["decision"], "block_review")
+        self.assertFalse(result.output.may_execute)
+        request, timeout = calls[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:1234/v1/chat/completions")
+        self.assertEqual(timeout, 180.0)
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertFalse(body["stream"])
+        self.assertEqual(body["temperature"], 0)
+
+    def test_primary_invocation_requires_opt_in_and_fails_closed(self) -> None:
+        opened = False
+
+        def opener(_request: object, *, timeout: float) -> _FakeResponse:
+            nonlocal opened
+            opened = True
+            return self._openai_response("{}")
+
+        with self.assertRaisesRegex(PermissionError, "explicit local invocation opt-in"):
+            invoke_local_openai_compatible_advisory(
+                request_id="lm-studio-2",
+                model_id="local-model",
+                purpose=ModelPurpose.EXPLANATION,
+                data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                prompt="Synthetic facts.",
+                opener=opener,
+            )
+        self.assertFalse(opened)
+
+        with self.assertRaisesRegex(LocalModelInvocationError, "strict_json_object_required"):
+            invoke_local_openai_compatible_advisory(
+                request_id="lm-studio-3",
+                model_id="local-model",
+                purpose=ModelPurpose.EXPLANATION,
+                data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                prompt="Synthetic facts.",
+                allow_local_invocation=True,
+                opener=lambda _request, timeout: self._openai_response("not json"),
+            )
 
     def test_strict_json_response_becomes_hash_bound_advisory_output(self) -> None:
         calls: list[tuple[object, float]] = []

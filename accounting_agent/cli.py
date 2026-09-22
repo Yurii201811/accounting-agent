@@ -143,7 +143,46 @@ def main(argv: list[str] | None = None) -> int:
         help="Emit the complete machine-readable system-check result.",
     )
 
+    serve = subparsers.add_parser(
+        "serve", help="Run the persistent local synthetic accounting workspace.",
+    )
+    serve.add_argument("--data-dir", type=Path, default=Path(".local/system"))
+    serve.add_argument("--port", type=int, default=8767)
+
+    backup = subparsers.add_parser("backup-workspace", help="Create a verified synthetic workspace backup.")
+    backup.add_argument("--data-dir", type=Path, default=Path(".local/system"))
+    backup.add_argument("--output", type=Path, required=True)
+    restore = subparsers.add_parser("restore-workspace", help="Restore a verified backup to a new data directory.")
+    restore.add_argument("--backup", type=Path, required=True)
+    restore.add_argument("--data-dir", type=Path, required=True)
+    health = subparsers.add_parser("check-workspace", help="Check local workspace storage readiness.")
+    health.add_argument("--data-dir", type=Path, default=Path(".local/system"))
+
     args = parser.parse_args(argv)
+    if args.command in {"backup-workspace", "restore-workspace", "check-workspace"}:
+        from accounting_agent.local_maintenance import create_backup, restore_backup
+        from accounting_agent.local_system import LocalAccountingSystem
+        import sqlite3
+        import zipfile
+
+        try:
+            if args.command == "backup-workspace":
+                result = create_backup(args.data_dir, args.output)
+            elif args.command == "restore-workspace":
+                result = restore_backup(args.backup, args.data_dir)
+            else:
+                if not (args.data_dir / "local_accounting_system.sqlite").is_file():
+                    raise ValueError("An existing workspace database is required")
+                result = LocalAccountingSystem(args.data_dir).health()
+        except (OSError, ValueError, RuntimeError, sqlite3.Error, zipfile.BadZipFile) as exc:
+            parser.exit(2, f"Workspace operation failed: {exc}\n")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "serve":
+        from accounting_agent.local_app import serve_local_system
+
+        serve_local_system(args.data_dir, port=args.port)
+        return 0
     if args.command == "process-fixtures":
         pipeline = SupplierInvoicePipeline(
             db_path=args.db,

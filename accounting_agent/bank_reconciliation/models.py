@@ -7,6 +7,8 @@ from datetime import date
 from enum import Enum
 from typing import Any, Mapping
 
+from accounting_agent.jurisdictions import get_currency_spec
+
 
 class MatchTargetType(str, Enum):
     CUSTOMER_INVOICE = "customer_invoice"
@@ -26,13 +28,16 @@ class BankTransaction:
     bank_account: str
     source: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "currency", _supported_currency(self.currency))
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "BankTransaction":
         return cls(
             transaction_id=str(data["transaction_id"]),
             date=date.fromisoformat(str(data["date"])),
             amount_minor=int(data["amount_minor"]),
-            currency=str(data.get("currency") or "SEK"),
+            currency=data.get("currency"),
             counterparty=str(data.get("counterparty") or ""),
             reference=str(data.get("reference") or ""),
             bank_account=str(data.get("bank_account") or ""),
@@ -80,6 +85,9 @@ class MatchTarget:
     status: str = "open"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "currency", _supported_currency(self.currency))
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "MatchTarget":
         due_date = data.get("due_date")
@@ -94,7 +102,7 @@ class MatchTarget:
                 if data.get("remaining_amount_minor") is not None
                 else None
             ),
-            currency=str(data.get("currency") or "SEK"),
+            currency=data.get("currency"),
             counterparty=str(data.get("counterparty") or ""),
             reference=str(data.get("reference") or ""),
             counterparty_id=(
@@ -173,3 +181,13 @@ class MatchCandidate:
             "explanations": list(self.explanations),
             "flags": list(self.flags),
         }
+
+
+def _supported_currency(value: Any) -> str:
+    """Return a canonical supported code without inventing missing evidence."""
+
+    code = str(value).strip().upper() if value is not None else ""
+    if not code:
+        raise ValueError("currency must be explicitly provided")
+    get_currency_spec(code)
+    return code

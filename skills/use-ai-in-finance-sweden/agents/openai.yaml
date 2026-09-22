@@ -1,0 +1,4 @@
+interface:
+  display_name: "Finance AI Workflows - Sweden"
+  short_description: "Safe AI workflows for Swedish finance teams"
+  default_prompt: "Use $use-ai-in-finance-sweden to improve this finance workflow with clear controls and human review."

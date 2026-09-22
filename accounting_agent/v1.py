@@ -394,7 +394,7 @@ def run_v1_synthetic_system_check() -> dict[str, Any]:
             request_id="route-local-preview",
             purpose=ModelPurpose.EXPLANATION,
             data_classification=DataClassification.PUBLIC_SYNTHETIC,
-            preferred_provider=ProviderId.OLLAMA,
+            preferred_provider=ProviderId.LOCAL_OPENAI_COMPATIBLE,
         )
     )
     hosted_route = plan_model_route(

@@ -52,6 +52,28 @@ The command processes five synthetic Swedish supplier invoice scenarios:
 - changed bank details
 - uncertain VAT/extraction
 
+## Supplier and payment-detail matching
+
+Only a registered organisation number confirms a supplier. A matching name
+without that identifier remains a review suggestion in `candidate_supplier_id`
+and `candidate_name`; it does not populate the proposed ERP supplier ID. If a
+recognised name and supplied organisation number identify different suppliers,
+the packet records `supplier_identity_conflict` and requires accountant review.
+An unrecognised organisation number cannot fall back to an automatic name match.
+
+Bank details are `matched` only when both the invoice and registry contain the
+same bankgiro. Missing details produce `missing_bank_details`, an `unknown`
+bank status, and incomplete risk evidence for the canonical policy gate. The
+packet requires accountant review and asks for bank-detail verification.
+Changed bank details retain the existing escalation requirement. These checks
+use the synthetic registry; they do not verify identities or accounts externally.
+
+Invoice amounts and VAT rates must be finite decimal values. Malformed values,
+`NaN`, infinities, and amounts that cannot be represented at the currency's
+two-decimal extraction precision are normalized to missing values. The local
+packet is still produced, but it requires human review or correction before
+use instead of passing invalid values into VAT or accounting arithmetic.
+
 ## Packet Contents
 
 Each packet is JSON and includes:

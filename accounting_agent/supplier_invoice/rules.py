@@ -98,6 +98,8 @@ FLAG_WEIGHTS = {
     "possible_duplicate": 35,
     "unknown_supplier": 30,
     "changed_bank_details": 45,
+    "missing_bank_details": 25,
+    "supplier_identity_conflict": 35,
     "low_extraction_confidence": 20,
     "missing_required_fields": 20,
     "vat_amount_mismatch": 30,
@@ -111,23 +113,35 @@ VALID_SWEDISH_VAT_RATES = {Decimal("0"), Decimal("6"), Decimal("12"), Decimal("2
 def match_supplier(extracted: dict[str, Any]) -> dict[str, Any]:
     org_number = normalize_org_number(extracted.get("supplier_org_number"))
     supplier = SUPPLIERS.get(org_number or "")
-    if not supplier:
-        supplier = _match_supplier_by_name(extracted.get("supplier_name"))
+    name_candidate = _match_supplier_by_name(extracted.get("supplier_name"))
+    identity_conflict = bool(name_candidate and org_number and supplier != name_candidate)
 
-    if not supplier:
+    if not supplier or identity_conflict:
+        flags = [
+            {
+                "code": "unknown_supplier",
+                "severity": "medium",
+                "message": "Supplier identity is not confirmed by the local registry; a name alone is only a review suggestion.",
+            }
+        ]
+        if identity_conflict:
+            flags.append(
+                {
+                    "code": "supplier_identity_conflict",
+                    "severity": "high",
+                    "message": "The organisation number does not identify the supplier suggested by the invoice name.",
+                }
+            )
         return {
             "status": "unknown",
             "supplier_id": None,
             "matched_name": None,
             "confidence": 0.25,
+            "match_basis": "identity_conflict" if identity_conflict else "unconfirmed",
+            "candidate_supplier_id": name_candidate["supplier_id"] if name_candidate else None,
+            "candidate_name": name_candidate["name"] if name_candidate else None,
             "bank_details_status": "unknown",
-            "flags": [
-                {
-                    "code": "unknown_supplier",
-                    "severity": "medium",
-                    "message": "Supplier is not present in the local supplier registry placeholder.",
-                }
-            ],
+            "flags": flags,
         }
 
     invoice_bankgiro = normalize_bankgiro(extracted.get("bankgiro"))
@@ -135,7 +149,17 @@ def match_supplier(extracted: dict[str, Any]) -> dict[str, Any]:
     flags: list[dict[str, str]] = []
     bank_status = "matched"
     confidence = 0.97
-    if invoice_bankgiro and known_bankgiro and invoice_bankgiro != known_bankgiro:
+    if not invoice_bankgiro or not known_bankgiro:
+        bank_status = "unknown"
+        confidence = 0.76
+        flags.append(
+            {
+                "code": "missing_bank_details",
+                "severity": "medium",
+                "message": "Invoice or registry bankgiro is missing; payment details cannot be verified.",
+            }
+        )
+    elif invoice_bankgiro != known_bankgiro:
         bank_status = "changed"
         confidence = 0.76
         flags.append(
@@ -151,6 +175,7 @@ def match_supplier(extracted: dict[str, Any]) -> dict[str, Any]:
         "supplier_id": supplier["supplier_id"],
         "matched_name": supplier["name"],
         "confidence": confidence,
+        "match_basis": "organisation_number",
         "bank_details_status": bank_status,
         "known_bankgiro": supplier.get("bankgiro"),
         "invoice_bankgiro": invoice_bankgiro,
@@ -377,9 +402,9 @@ def _external_action_for_flags(flag_codes: set[str]) -> dict[str, Any]:
     if "possible_duplicate" in flag_codes:
         action = "none_until_duplicate_reviewed"
         reason = "Possible duplicate invoice detected."
-    elif "changed_bank_details" in flag_codes:
+    elif {"changed_bank_details", "missing_bank_details"} & flag_codes:
         action = "none_until_bank_details_verified"
-        reason = "Invoice payment details differ from known supplier data."
+        reason = "Invoice payment details are missing or differ from known supplier data."
     elif "unknown_supplier" in flag_codes:
         action = "none_until_supplier_created_or_matched"
         reason = "Supplier is unknown to the local registry placeholder."

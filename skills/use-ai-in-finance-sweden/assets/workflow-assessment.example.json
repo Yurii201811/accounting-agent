@@ -1,0 +1,21 @@
+{
+  "name": "Monthly actual-versus-budget variance commentary",
+  "frequency_per_month": 1,
+  "minutes_per_run": 240,
+  "standardization": 4,
+  "verification": "sampled",
+  "data_sensitivity": "internal",
+  "decision_consequence": "moderate",
+  "reversibility": "reversible",
+  "external_system_write": false,
+  "external_communication": false,
+  "final_posting_or_approval": false,
+  "payment_or_bank_change": false,
+  "tax_or_filing": false,
+  "delete_or_settings_change": false,
+  "contains_credentials": false,
+  "changed_supplier_bank_details": false,
+  "possible_duplicate": false,
+  "unknown_supplier": false,
+  "uncertain_vat": false
+}

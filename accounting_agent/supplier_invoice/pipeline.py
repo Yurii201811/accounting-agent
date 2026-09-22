@@ -585,7 +585,11 @@ def build_supplier_invoice_policy_context(
         ocr_confidence=float(extracted.get("extraction_confidence") or 0.0),
         period_locked=bool(extracted.get("period_locked", False)),
         risk_findings=risk_findings,
-        risk_evidence_complete=True,
+        # A detected bank change is known adverse evidence; absent details are not.
+        risk_evidence_complete=(
+            supplier_match.get("status") == "matched"
+            and supplier_match.get("bank_details_status") in {"matched", "changed"}
+        ),
     )
 
 

@@ -37,7 +37,8 @@ external systems. It does not initialize or mutate the SQLite database.
 - Today: run readiness, unique priority-case count, and zero-required live-call
   counters. A non-zero live counter is rendered as a safety violation.
 - Review: one deduplicated row per case, sorted by the strictest stop condition,
-  with search and priority filtering. No queue is truncated.
+  with work-type, search, and priority filtering. Supplier/counterparty, reference,
+  and exact stored amount identify the work. No queue is truncated.
 - Close: dependency-aware evidence, reconciliation, exception, policy, and
   independent-signoff controls.
 - Automation: a resumable preparation ladder and advisory model-routing
@@ -60,6 +61,70 @@ policy. The primary interface, dynamic review reasons, filters, workflow,
 provider matrix, empty states, and dates are localized. A zero-result filter
 state offers a local clear-filters action.
 `Cmd/Ctrl + K` opens section navigation.
+
+### Inspecting a case
+
+Supplier invoices and bank transactions have counted work-type filters. Counts
+represent unique cases, not repeated risk signals; the selected type combines
+with search and priority. Removable filter chips and Clear all reset the same
+controls, with localized result announcements and keyboard focus recovery.
+
+Every case has a native Inspect case / Visa ärende disclosure available in both
+Guided and Expert modes. It lists the checks needed before reassessment, so a
+secondary duplicate or payment-detail risk remains visible even when a stronger
+rule blocks the case. Senior review remains explicit on escalated cases.
+Opening a disclosure never approves, resolves, selects, or changes a case.
+
+Tied bank matches show every equally scored top invoice beside its match score,
+with an explicit none-selected state. Supplier identity conflicts and missing
+bank details have specific English/Swedish explanations. Existing evidence
+links can be opened directly in Guided mode; raw case IDs and policy diagnostics
+remain in Expert details. Amounts use the stored currency precision and localized
+number separators; missing or invalid amounts stay absent instead of becoming
+zero. The isolated public preview demonstrates these controls with invented
+company names, references, and a tied payment example.
+
+Case details also show invoice net, VAT, total, invoice date, and due date. An
+invalid or missing monetary field is explicitly labelled rather than filled
+with zero. Bank cases show the proposed reference, bank amount, and open amount.
+Comparable amounts show the remaining balance if matched or the overpayment;
+different currencies, opposite directions, zero amounts, or invalid amounts
+show a non-comparable state instead of a calculated residual. These are
+read-only comparisons: balances are never updated by the cockpit.
+
+Partial payments, amount differences, and incompatible currency/direction have
+specific bilingual guidance. A low score explained by those known differences
+does not by itself become an unrelated missing-evidence warning. The main
+instruction is not repeated inside the disclosure when useful facts are
+available; any additional risk checks remain visible. Fact labels and values
+are searchable in both languages.
+
+## Navigation and decision hierarchy
+
+Below `60rem`, a labelled native section jump remains non-sticky and provides
+access to every visible section without horizontal scrolling. Today stacks the
+priority count, counted Review action, and local-run state in that order. At
+`60rem` and wider, the same sections are rendered as desktop anchors that stay
+sticky below the safety strip; linked headings receive top clearance, and
+Today preserves count, run, and action as desktop columns. The jump and anchors
+stay synchronized with the current hash and scroll position.
+
+The compact masthead exposes Review early. Today then leads with the priority
+count, local-run state, latest evidence, and a counted Review action, followed
+by the always-visible live-safety heartbeat and secondary fixture state. Every
+Review row labels its localized reason as “Next human decision” / “Nästa
+mänskliga beslut” and its evidence state as “Evidence” / “Underlag”. Review
+filters identify the list and live result count they update. When no cases
+exist, the visible zero count remains while the filters and dynamic no-match
+state are omitted in favor of one calm bilingual static state. When filters
+are active, localized removable chips expose the current search and priority;
+individual removal returns focus to its control, while Clear all resets both.
+The live result reports visible and total cases with correct English/Swedish
+grammar. A stable severity rail reinforces the existing text badge, and row
+hover or descendant focus adds emphasis without using color as the only signal.
+In the command dialog, arrow keys move through matching sections and Escape
+closes the dialog from any focused item and returns focus to the Find work
+control. The interface remains strictly observe/review-only.
 
 The stylesheet is bundled as package data and copied locally when a clean
 installation builds a cockpit. The page remains offline and contains no CDN,

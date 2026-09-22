@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from accounting_agent.client_identity import canonical_client_id
 from accounting_agent.policy import (
@@ -48,6 +48,17 @@ class BankReconciliationPipeline:
         transactions: list[BankTransaction],
         targets: list[MatchTarget],
     ) -> list[dict[str, Any]]:
+        _validate_unique_identifiers(
+            (transaction.transaction_id for transaction in transactions),
+            label="bank transaction",
+        )
+        _validate_unique_packet_keys(
+            transaction.transaction_id for transaction in transactions
+        )
+        _validate_unique_identifiers(
+            (target.target_id for target in targets),
+            label="open item",
+        )
         now = utc_now()
         duplicate_risks = duplicate_transaction_risks(transactions)
         target_by_id = {target.target_id: target for target in targets}
@@ -58,12 +69,16 @@ class BankReconciliationPipeline:
         selected_target_counts = Counter(
             candidates[0].target_id
             for candidates in candidates_by_transaction.values()
-            if candidates
+            if candidates and not _top_candidate_is_ambiguous(candidates)
         )
         proposals = []
         for transaction in transactions:
             candidates = candidates_by_transaction[transaction.transaction_id]
-            selected = candidates[0] if candidates else None
+            selected = (
+                candidates[0]
+                if candidates and not _top_candidate_is_ambiguous(candidates)
+                else None
+            )
             selected_target = target_by_id.get(selected.target_id) if selected else None
             proposal = build_reconciliation_proposal(
                 now=now,
@@ -120,22 +135,35 @@ def build_reconciliation_proposal(
     duplicate_risk: float,
     target_reuse_count: int = 0,
 ) -> dict[str, Any]:
-    selected_candidate = candidates[0] if candidates else None
+    ambiguous_match = _top_candidate_is_ambiguous(candidates)
+    selected_candidate = candidates[0] if candidates and not ambiguous_match else None
+    effective_selected_target = selected_target if not ambiguous_match else None
     case_id = f"br_{transaction.transaction_id}"
     target_reused = target_reuse_count > 1
     risk_flags = _risk_flags(
         transaction,
         selected_candidate,
-        selected_target,
+        effective_selected_target,
         duplicate_risk,
+        ambiguous_match=ambiguous_match,
         target_reused=target_reused,
     )
     proposal_decision = _evaluate_proposal_policy(
         client_id=client_id,
         transaction=transaction,
         selected_candidate=selected_candidate,
-        selected_target=selected_target,
+        selected_target=effective_selected_target,
         duplicate_risk=max(duplicate_risk, 0.85 if target_reused else 0.0),
+        risk_evidence_complete=(
+            not ambiguous_match
+            and not (
+                selected_candidate
+                and set(selected_candidate.flags) & {
+                    "partial_payment", "small_amount_delta", "amount_mismatch",
+                    "currency_mismatch", "direction_mismatch",
+                }
+            )
+        ),
     )
     matching_decision = evaluate_policy(
         PolicyContext(
@@ -155,14 +183,16 @@ def build_reconciliation_proposal(
     proposal_status = _proposal_status(
         selected_candidate,
         duplicate_risk,
+        ambiguous_match=ambiguous_match,
         target_reused=target_reused,
     )
     payload = _reconciliation_payload(
         case_id=case_id,
         transaction=transaction,
         selected_candidate=selected_candidate,
-        selected_target=selected_target,
+        selected_target=effective_selected_target,
         proposal_decision=proposal_decision,
+        ambiguous_match=ambiguous_match,
     )
     proposal = {
         "packet_version": PACKET_VERSION,
@@ -176,13 +206,21 @@ def build_reconciliation_proposal(
         "transaction": transaction.to_dict(),
         "candidates": [candidate.to_dict() for candidate in candidates],
         "selected_candidate": selected_candidate.to_dict() if selected_candidate else None,
-        "selected_target": selected_target.to_dict() if selected_target else None,
+        "selected_target": (
+            effective_selected_target.to_dict() if effective_selected_target else None
+        ),
         "confidence": selected_candidate.confidence if selected_candidate else 0.0,
-        "explanations": _proposal_explanations(selected_candidate, selected_target, risk_flags),
+        "explanations": _proposal_explanations(
+            selected_candidate,
+            effective_selected_target,
+            risk_flags,
+            ambiguous_match=ambiguous_match,
+        ),
         "risk": {
             "duplicate_risk": duplicate_risk,
             "target_reuse_count": target_reuse_count,
             "allocation_conflict": target_reused,
+            "ambiguous_match": ambiguous_match,
             "flags": risk_flags,
             "level": _risk_level(risk_flags, proposal_decision.permission_mode),
         },
@@ -232,6 +270,17 @@ def build_reconciliation_proposal(
 
 
 def build_approval_packet(proposal: dict[str, Any]) -> dict[str, Any]:
+    if proposal["risk"].get("ambiguous_match"):
+        top_confidence = proposal["candidates"][0]["confidence"]
+        alternatives = [
+            candidate
+            for candidate in proposal["candidates"]
+            if candidate["confidence"] == top_confidence
+        ]
+    elif proposal["selected_candidate"] is not None:
+        alternatives = proposal["candidates"][1:4]
+    else:
+        alternatives = proposal["candidates"][:4]
     return {
         "packet_version": PACKET_VERSION,
         "generated_at": proposal["generated_at"],
@@ -239,7 +288,7 @@ def build_approval_packet(proposal: dict[str, Any]) -> dict[str, Any]:
         "transaction": proposal["transaction"],
         "selected_candidate": proposal["selected_candidate"],
         "selected_target": proposal["selected_target"],
-        "alternatives": proposal["candidates"][1:4],
+        "alternatives": alternatives,
         "confidence": proposal["confidence"],
         "explanations": proposal["explanations"],
         "risk": proposal["risk"],
@@ -252,19 +301,20 @@ def build_approval_packet(proposal: dict[str, Any]) -> dict[str, Any]:
 
 
 def policy_decision_to_dict(decision: PolicyDecision) -> dict[str, Any]:
+    thresholds = decision.amount_thresholds
     return {
         "action_type": decision.action_type.value,
         "client_id": decision.client_id,
         "mode": decision.permission_mode.value,
         "policy_version": decision.policy_version,
-        "amount_thresholds": {
-            "draft_without_review_minor": (
-                decision.amount_thresholds.draft_without_review_minor
-            ),
-            "escalation_required_minor": (
-                decision.amount_thresholds.escalation_required_minor
-            ),
-        },
+        "amount_thresholds": (
+            {
+                "draft_without_review_minor": thresholds.draft_without_review_minor,
+                "escalation_required_minor": thresholds.escalation_required_minor,
+            }
+            if thresholds is not None
+            else None
+        ),
         "required_reviews": list(decision.required_reviews),
         "reasons": list(decision.reasons),
         "is_external_write": decision.is_external_write,
@@ -278,6 +328,7 @@ def _evaluate_proposal_policy(
     selected_candidate: MatchCandidate | None,
     selected_target: MatchTarget | None,
     duplicate_risk: float,
+    risk_evidence_complete: bool = True,
 ) -> PolicyDecision:
     supplier_known = True
     customer_known = True
@@ -303,7 +354,7 @@ def _evaluate_proposal_policy(
             vat_confidence=1.0,
             bank_details_changed=_bank_details_changed(selected_target),
             new_supplier=not supplier_known and transaction.amount_minor < 0,
-            risk_evidence_complete=True,
+            risk_evidence_complete=risk_evidence_complete,
         )
     )
 
@@ -314,10 +365,22 @@ def _risk_flags(
     selected_target: MatchTarget | None,
     duplicate_risk: float,
     *,
+    ambiguous_match: bool = False,
     target_reused: bool = False,
 ) -> list[dict[str, Any]]:
     flags: list[dict[str, Any]] = []
-    if selected_candidate is None:
+    if ambiguous_match:
+        flags.append(
+            {
+                "code": "ambiguous_match",
+                "severity": "high",
+                "message": (
+                    "Multiple distinct open items share the highest candidate confidence; "
+                    "a reviewer must select or reject the match."
+                ),
+            }
+        )
+    elif selected_candidate is None:
         flags.append(
             {
                 "code": "unknown_transaction",
@@ -402,8 +465,11 @@ def _proposal_status(
     selected_candidate: MatchCandidate | None,
     duplicate_risk: float,
     *,
+    ambiguous_match: bool = False,
     target_reused: bool = False,
 ) -> str:
+    if ambiguous_match:
+        return "ambiguous_match_review_required"
     if selected_candidate is None:
         return "unmatched_needs_review"
     if duplicate_risk >= 0.5 or target_reused:
@@ -419,7 +485,15 @@ def _proposal_explanations(
     selected_candidate: MatchCandidate | None,
     selected_target: MatchTarget | None,
     risk_flags: list[dict[str, Any]],
+    *,
+    ambiguous_match: bool = False,
 ) -> list[str]:
+    if ambiguous_match:
+        return [
+            "Multiple distinct open items have the same highest candidate confidence.",
+            "No match was selected; a human must choose or reject the candidates.",
+            "Policy-relevant flags: ambiguous_match.",
+        ]
     if selected_candidate is None:
         return [
             "No candidate passed the matching threshold.",
@@ -455,6 +529,8 @@ def _required_human_decision(
         )
     if decision.permission_mode is PermissionMode.FORBIDDEN:
         return "Stop: policy forbids the requested reconciliation action."
+    if any(flag["code"] == "ambiguous_match" for flag in risk_flags):
+        return "Choose or reject the tied open-item candidates before any reconciliation proposal is prepared."
     if selected_candidate is None:
         return "Review the bank transaction, classify the counterparty, and choose whether to create a new voucher or request more evidence."
     if any(flag["code"] == "partial_payment" for flag in risk_flags):
@@ -473,10 +549,17 @@ def _reconciliation_payload(
     selected_candidate: MatchCandidate | None,
     selected_target: MatchTarget | None,
     proposal_decision: PolicyDecision,
+    ambiguous_match: bool = False,
 ) -> dict[str, Any]:
     target = selected_target.to_dict() if selected_target else None
-    residual_amount_minor = 0
-    if selected_target is not None:
+    amounts_comparable = bool(
+        selected_target is not None
+        and transaction.currency == selected_target.currency
+        and transaction.direction == selected_target.direction
+        and transaction.direction != "zero"
+    )
+    residual_amount_minor = None
+    if amounts_comparable and selected_target is not None:
         residual_amount_minor = (
             selected_target.expected_amount_minor - transaction.amount_minor
         )
@@ -488,12 +571,16 @@ def _reconciliation_payload(
         "reconciles_in_fortnox": False,
         "starts_payment": False,
         "case_id": case_id,
-        "proposal_action": _proposal_action(selected_candidate, selected_target),
+        "proposal_action": _proposal_action(
+            selected_candidate,
+            selected_target,
+            ambiguous_match=ambiguous_match,
+        ),
         "policy_mode": proposal_decision.permission_mode.value,
         "bank_transaction": transaction.to_dict(),
         "matched_target": target,
         "matched_amount_minor": transaction.amount_minor if selected_target else 0,
-        "residual_amount_minor": residual_amount_minor if selected_target else None,
+        "residual_amount_minor": residual_amount_minor,
         "confidence": selected_candidate.confidence if selected_candidate else 0.0,
         "blocked_from_live_use": True,
         "blocked_reason": (
@@ -514,7 +601,11 @@ def _reconciliation_payload(
 def _proposal_action(
     selected_candidate: MatchCandidate | None,
     selected_target: MatchTarget | None,
+    *,
+    ambiguous_match: bool = False,
 ) -> str:
+    if ambiguous_match:
+        return "none_until_match_selected"
     if selected_candidate is None or selected_target is None:
         return "none_until_transaction_classified"
     if "partial_payment" in selected_candidate.flags:
@@ -541,6 +632,57 @@ def _bank_details_changed(selected_target: MatchTarget | None) -> bool:
     if selected_target is None:
         return False
     return bool(selected_target.metadata.get("bank_details_changed", False))
+
+
+def _top_candidate_is_ambiguous(candidates: list[MatchCandidate]) -> bool:
+    """Return whether distinct targets tie at the rounded top confidence."""
+
+    if len(candidates) < 2:
+        return False
+    top_confidence = candidates[0].confidence
+    tied_target_ids = {
+        candidate.target_id
+        for candidate in candidates
+        if candidate.confidence == top_confidence
+    }
+    return len(tied_target_ids) > 1
+
+
+def _validate_unique_identifiers(identifiers: Iterable[str], *, label: str) -> None:
+    """Fail before packet generation when source identifiers are unusable."""
+
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for identifier in identifiers:
+        if not identifier or not identifier.strip():
+            raise ValueError(f"{label.capitalize()} identifiers must be non-empty")
+        if identifier in seen:
+            duplicates.add(identifier)
+        seen.add(identifier)
+    if duplicates:
+        duplicate_list = ", ".join(sorted(duplicates))
+        raise ValueError(f"Duplicate {label} identifiers: {duplicate_list}")
+
+
+def _validate_unique_packet_keys(transaction_ids: Iterable[str]) -> None:
+    """Reject distinct source IDs that would overwrite the same packet path."""
+
+    identifiers_by_key: dict[str, set[str]] = {}
+    for transaction_id in transaction_ids:
+        packet_key = _safe_filename(transaction_id).casefold()
+        identifiers_by_key.setdefault(packet_key, set()).add(transaction_id)
+    colliding_identifiers = sorted(
+        identifier
+        for identifiers in identifiers_by_key.values()
+        if len(identifiers) > 1
+        for identifier in identifiers
+    )
+    if colliding_identifiers:
+        collision_list = ", ".join(colliding_identifiers)
+        raise ValueError(
+            "Bank transaction identifiers produce duplicate packet filenames: "
+            f"{collision_list}"
+        )
 
 
 def _safe_filename(value: str) -> str:

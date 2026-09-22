@@ -10,12 +10,66 @@ packets, and records local evidence. It does not process real client data or
 post, approve, send, pay, delete, change ERP settings, file tax, or call a live
 provider.
 
+## Run the local application
+
+```bash
+python3 -m accounting_agent.cli serve --data-dir .local/system --port 8767
+```
+
+Open **http://127.0.0.1:8767/**. The persistent application connects synthetic
+intake, supplier-invoice and bank-reconciliation pipelines, case evidence,
+local review records, run history, and an evidence export.
+
+1. Run the sample month, or download the sample format and import a synthetic
+   JSON bundle.
+2. Open a case to inspect amounts, risk findings, the accounting proposal, and
+   its saved source packet.
+3. Record a review, request changes, or reject the proposal. Review records
+   preserve the original accounting policy and never authorize execution.
+4. Export the run's input, cases, review history, and audit records as JSON.
+5. Restart with the same data directory to reopen the saved work.
+
+The server binds only to `127.0.0.1`; it is a local, single-user development
+system. Real-client processing and live financial integrations remain outside
+this build. See [Local system guide](docs/local_system.md) for the data contract,
+API, persistence, recovery, and evidence boundaries. The original read-only
+cockpit and CLI workflows remain available below.
+
+Use **Prepare workspace backup** in the sidebar to download a checked recovery
+copy of all saved work. To restore, use a new data directory:
+
+```bash
+python3 -m accounting_agent.cli restore-workspace --backup accounting-workspace.zip --data-dir .local/restored
+python3 -m accounting_agent.cli serve --data-dir .local/restored --port 8767
+```
+
+Run the complete local release gate with `python3 scripts/verify_release.py`.
+It records test, accounting-control, and JavaScript syntax results under
+`.local/release-verification.json`. See [backup and release operations](docs/local_release_operations.md).
+
 Version 1 adds explicit legal-entity journals, evidence-bound approvals,
 dependency-aware close readiness, resumable preparation agents, guarded ERP
 read contracts, provider-neutral advisory-model routing, and a bilingual
 Guided/Expert cockpit. International support is a schema and jurisdiction-pack
 foundation, not a blanket compliance claim. Live provider writes remain
 forbidden.
+
+## Finance AI skill for Swedish teams
+
+The repository also contains a standalone, provider-neutral Agent Skill for
+accountants, controllers, FP&A teams, CFOs, audit/tax/payroll professionals, and
+companies introducing Codex, Claude, Excel, or AI agents into finance work:
+
+- [Practical AI for finance in Sweden](docs/ai_for_finance_sweden.md) — a
+  publication-ready guide based on Swedish authorities, research, open-source
+  patterns, and clearly labeled practitioner evidence.
+- [use-ai-in-finance-sweden](skills/use-ai-in-finance-sweden/SKILL.md) — the
+  installable skill with role playbooks, Excel routing, Swedish governance,
+  adoption controls, task briefs, templates, and a synthetic workflow scorer.
+
+The skill keeps calculations reproducible, source evidence visible, sensitive
+data inside approved environments, and posting, approval, payment, filing,
+signing, deletion, and external communication under human control.
 
 Inspect that machine-readable boundary:
 

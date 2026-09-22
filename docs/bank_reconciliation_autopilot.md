@@ -24,7 +24,7 @@ Each bank transaction contains:
 - `transaction_id`: stable bank/source identifier
 - `date`: ISO transaction date
 - `amount_minor`: signed amount in minor units, for example ore for SEK
-- `currency`: ISO-style currency code
+- `currency`: explicit supported ISO-style currency code; supplied codes are trimmed and uppercased, while missing or unsupported codes are rejected
 - `counterparty`: payer/payee text from the bank feed export
 - `reference`: OCR, invoice number, or payment message
 - `bank_account`: the company bank account that received or sent the payment
@@ -73,6 +73,12 @@ Every candidate includes:
 
 Low-confidence, partial, duplicate-looking, unknown, changed-bank-detail, or unusual cases are routed to review.
 
+Selected candidates with amount, currency, or payment-direction differences are treated as incomplete risk evidence by the canonical policy engine and require review. This includes small amount differences even when the remaining score is high. A date-distance flag alone retains the existing confidence-based policy. Residual amounts are reported only when transaction and target currencies and non-zero directions are compatible.
+
+Transaction and open-item identifiers must be non-empty and unique within a run. Transaction identifiers must also produce unique packet filenames. The pipeline rejects invalid identifiers before generating any packets so one source row cannot overwrite another row's candidates or output.
+
+If distinct open items have the same highest confidence after scoring is rounded, the proposal remains unselected. It retains every top-scoring tied candidate as an alternative, records an `ambiguous_match` risk, and requires a human to choose or reject the match.
+
 ## Policy Gates
 
 The central policy engine now knows two bank reconciliation actions:
@@ -94,6 +100,7 @@ Approval packets are generated only for cases that need review:
 
 - partial payment
 - duplicate-looking transaction
+- equally scored top candidates for distinct open items
 - unmatched/unknown transaction
 - escalated or forbidden local proposal decision
 
