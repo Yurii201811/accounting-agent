@@ -338,7 +338,7 @@ def build_public_preview(
 
 
 def _synthetic_public_preview_data(*, bundle: Path, output: Path) -> OperationsCockpitData:
-    generated_at = _utc_now()
+    generated_at = _public_preview_generated_at()
     review_items = {
         "approval_required": [
             ReviewItem(
@@ -526,7 +526,7 @@ def render_operations_cockpit(data: OperationsCockpitData) -> str:
             _render_environment_strip(),
             _render_header(data),
             _render_section_nav(data),
-            '<main id="main-content" class="shell">',
+            '<main id="main-content" class="shell" tabindex="-1">',
             _render_status_grid(data),
             _render_review_queues(data, root, output),
             _render_setup(data),
@@ -670,8 +670,8 @@ def _render_status_grid(data: OperationsCockpitData) -> str:
         f"""
     <div class="stat" data-tone="{tone}">
       <dt {_i18n_attrs(label, label_sv)}>{_e(label)}</dt>
-      <dd {_i18n_attrs(value, value_sv)}>{_e(value)}</dd>
-      <span {_i18n_attrs(note, note_sv)}>{_e(note)}</span>
+      <dd class="stat-value" {_i18n_attrs(value, value_sv)}>{_e(value)}</dd>
+      <dd class="stat-note" {_i18n_attrs(note, note_sv)}>{_e(note)}</dd>
     </div>"""
         for label, label_sv, value, value_sv, tone, note, note_sv in cards
     )
@@ -964,6 +964,9 @@ def _render_review_queues(
     output: Path,
 ) -> str:
     items = _prioritized_review_items(data.review_queues)
+    initial_result_count = (
+        "1 item shown" if len(items) == 1 else f"{len(items)} items shown"
+    )
     rows = []
     for item in items:
         categories = " · ".join(item.categories)
@@ -1028,7 +1031,7 @@ def _render_review_queues(
       <h2 id="review-title" data-i18n data-en="Review" data-sv="Granskning">Review</h2>
       <p data-i18n data-en="One row per case. Repeated risk signals are combined, and the most serious stop condition determines priority." data-sv="En rad per ärende. Upprepade risksignaler slås samman och det allvarligaste stoppvillkoret avgör prioriteten.">One row per case. Repeated risk signals are combined, and the most serious stop condition determines priority.</p>
     </div>
-    <p class="result-count" id="review-result-count" aria-live="polite">{len(items)} items shown</p>
+    <p class="result-count" id="review-result-count" aria-live="polite">{initial_result_count}</p>
   </div>
   <div class="review-filters" aria-label="Review filters" data-aria-label-en="Review filters" data-aria-label-sv="Granskningsfilter">
     <label class="search-field">
@@ -1154,7 +1157,7 @@ def _render_integrations() -> str:
   <div class="section-heading">
     <div>
       <h2 id="integrations-title" data-i18n data-en="Integrations" data-sv="Integrationer">Integrations</h2>
-      <p data-i18n data-en="One read-only conformance contract across ERP and exchange providers. Exact tenant/company binding, source hashes, schema versions, cursors, and retry evidence are required." data-sv="Ett skrivskyddat konformitetskontrakt gäller för ERP- och utbytesleverantörer. Exakt tenant-/företagsbindning, källhashar, schemaversioner, markörer och återförsöksunderlag krävs.">One read-only conformance contract across ERP and exchange providers. Exact tenant/company binding, source hashes, schema versions, cursors, and retry evidence are required.</p>
+      <p data-i18n data-en="One read-only conformance contract across ERP and exchange providers. Exact tenant, company, and environment binding, source hashes, schema versions, cursors, and retry evidence are required." data-sv="Ett skrivskyddat konformitetskontrakt gäller för ERP- och utbytesleverantörer. Exakt tenant-, företags- och miljöbindning, källhashar, schemaversioner, markörer och återförsöksunderlag krävs.">One read-only conformance contract across ERP and exchange providers. Exact tenant, company, and environment binding, source hashes, schema versions, cursors, and retry evidence are required.</p>
     </div>
   </div>
   <div class="guided-only guided-summary"><strong data-i18n data-en="Connections stay read-only" data-sv="Anslutningar förblir skrivskyddade">Connections stay read-only</strong><p data-i18n data-en="Fortnox has a guarded read-only preview path. NetSuite, Oracle, SAP, Odoo, SIE, and CSV are declared contracts, not connected production integrations." data-sv="Fortnox har en bevakad skrivskyddad förhandsväg. NetSuite, Oracle, SAP, Odoo, SIE och CSV är deklarerade kontrakt, inte anslutna produktionsintegrationer.">Fortnox has a guarded read-only preview path. NetSuite, Oracle, SAP, Odoo, SIE, and CSV are declared contracts, not connected production integrations.</p></div>
@@ -1826,13 +1829,13 @@ def _collect_artifacts(root: Path, fake_root: Path, demo_root: Path) -> tuple[Ar
     for folder, pattern, label_prefix, label_prefix_sv, kind in group_specs:
         paths = sorted(folder.glob(pattern), key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
         for path in paths[:6]:
-            rel_path = _rel_to_root(path, root)
-            if rel_path:
+            relative_path = _rel_to_root(path, root)
+            if relative_path:
                 artifacts.append(
                     ArtifactLink(
                         label=f"{label_prefix}: {path.stem}",
                         label_sv=f"{label_prefix_sv}: {path.stem}",
-                        path=rel_path,
+                        path=relative_path,
                         kind=kind,
                         exists=True,
                         note="latest local file",
@@ -1890,7 +1893,9 @@ def _read_queue_counts(db_path: Path) -> dict[str, int]:
         for table in tables:
             if table not in available:
                 continue
-            row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            # table is selected from the local constant tuple above.
+            count_sql = f"SELECT COUNT(*) FROM {table}"  # nosec B608
+            row = connection.execute(count_sql).fetchone()
             counts[table] = int(row[0])
         return counts
     except sqlite3.Error:
@@ -2051,8 +2056,10 @@ def _demo_readiness(demo_manifest: dict[str, Any], demo_summary: dict[str, Any])
 
 
 def _review_total(fake_manifest: dict[str, Any]) -> int:
-    metrics = fake_manifest.get("metrics") if isinstance(fake_manifest, dict) else {}
-    counts = metrics.get("primary_case_decision_counts") if isinstance(metrics, dict) else {}
+    raw_metrics = fake_manifest.get("metrics")
+    metrics: dict[str, Any] = raw_metrics if isinstance(raw_metrics, dict) else {}
+    raw_counts = metrics.get("primary_case_decision_counts")
+    counts: dict[str, Any] = raw_counts if isinstance(raw_counts, dict) else {}
     return sum(_as_int(counts.get(mode)) for mode in ("approval_required", "escalation_required", "forbidden"))
 
 
@@ -2228,6 +2235,24 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _public_preview_generated_at() -> str:
+    raw_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if raw_epoch is None:
+        return _utc_now()
+    if not raw_epoch or raw_epoch != raw_epoch.strip():
+        raise ValueError("SOURCE_DATE_EPOCH must be a non-negative integer")
+    try:
+        epoch = int(raw_epoch)
+    except ValueError as error:
+        raise ValueError("SOURCE_DATE_EPOCH must be a non-negative integer") from error
+    if epoch < 0:
+        raise ValueError("SOURCE_DATE_EPOCH must be a non-negative integer")
+    try:
+        return datetime.fromtimestamp(epoch, timezone.utc).replace(microsecond=0).isoformat()
+    except (OSError, OverflowError, ValueError) as error:
+        raise ValueError("SOURCE_DATE_EPOCH is outside the supported range") from error
+
+
 def _e(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
@@ -2264,7 +2289,7 @@ _CSS = """
 /* Hallmark · genre: modern-minimal · macrostructure: Narrative Workflow · theme: Coral · enrichment: none · nav: N9 · footer: Ft5
  * F4 knobs: numbering=1.0/2.0/3.0, layout=vertical-stack, connector=line · F3 knobs: columns=4, rules=every-row, numbers=tabular
  * context: inferred · audience: accountants/controllers/auditors/operators · use: clear exceptions and advance close · tone: technical-austere
- * pre-emit: P5 H5 E4 S5 R5 V4 · contrast: pass (40–41) · responsive: pass (34, 49–57)
+ * pre-emit: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · responsive: pass (34, 49–57)
  * slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · icons: pass (30)
  */
 * { box-sizing: border-box; }
@@ -2456,6 +2481,7 @@ select, input[type="search"] {
   background: var(--color-surface);
   color: var(--color-ink);
 }
+select { block-size: 2.75rem; }
 select:active, input[type="search"]:active { border-color: var(--color-accent-strong); }
 input[type="search"]::placeholder { color: var(--color-ink-muted); }
 .view-toggle {
@@ -2567,11 +2593,11 @@ main.shell { padding-block: var(--space-sm) var(--space-3xl); }
   border-block-end: var(--rule-thin) solid var(--color-line);
 }
 .stat dt { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 700; }
-.stat dd { margin: var(--space-xs) 0 var(--space-2xs); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; overflow-wrap: anywhere; }
-.stat span { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
-.stat[data-tone="safe"] dd { color: var(--color-safe); }
-.stat[data-tone="warning"] dd { color: var(--color-warning); }
-.stat[data-tone="danger"] dd { color: var(--color-danger); }
+.stat .stat-value { margin: var(--space-xs) 0 var(--space-2xs); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; overflow-wrap: anywhere; }
+.stat .stat-note { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
+.stat[data-tone="safe"] .stat-value { color: var(--color-safe); }
+.stat[data-tone="warning"] .stat-value { color: var(--color-warning); }
+.stat[data-tone="danger"] .stat-value { color: var(--color-danger); }
 .boundary-notice {
   display: grid;
   gap: var(--space-sm);
@@ -2976,7 +3002,9 @@ _SCRIPT = r"""
       if (!row.hidden) visible += 1;
     });
     const isSwedish = localeSelect && localeSelect.value === "sv-SE";
-    reviewResultCount.textContent = isSwedish ? `${visible} poster visas` : `${visible} items shown`;
+    reviewResultCount.textContent = isSwedish
+      ? (visible === 1 ? `${visible} post visas` : `${visible} poster visas`)
+      : (visible === 1 ? `${visible} item shown` : `${visible} items shown`);
     if (reviewEmpty) reviewEmpty.hidden = visible !== 0;
   }
   reviewSearch?.addEventListener("input", updateReviewResults);
@@ -2994,11 +3022,16 @@ _SCRIPT = r"""
   const commandItems = [...document.querySelectorAll("#command-list li")];
   const commandEmpty = document.querySelector("#command-empty");
   let activeIndex = 0;
+  let restoreCommandTrigger = true;
   if (commandShortcut) commandShortcut.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
 
   const visibleCommandLinks = () => commandItems
     .filter((item) => !item.hidden)
     .map((item) => item.querySelector("a"));
+  const commandFocusableElements = () => dialog
+    ? [...dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), a[href], select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+      .filter((element) => !element.closest("[hidden]") && element.getClientRects().length)
+    : [];
   const setActiveCommand = (index) => {
     const links = visibleCommandLinks();
     if (!links.length) return;
@@ -3016,6 +3049,7 @@ _SCRIPT = r"""
   };
   const openCommands = () => {
     if (!dialog) return;
+    restoreCommandTrigger = true;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
     if (commandSearch) {
@@ -3062,9 +3096,36 @@ _SCRIPT = r"""
       firstLink.click();
     }
   });
-  commandItems.forEach((item) => item.querySelector("a")?.addEventListener("click", closeCommands));
+  commandItems.forEach((item) => item.querySelector("a")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const destination = event.currentTarget.getAttribute("href");
+    restoreCommandTrigger = false;
+    closeCommands();
+    if (destination) window.location.hash = destination;
+    requestAnimationFrame(() => {
+      const section = destination ? document.querySelector(destination) : null;
+      const focusTarget = section?.querySelector("h2, h3") || section;
+      if (!focusTarget) return;
+      if (!focusTarget.hasAttribute("tabindex")) focusTarget.setAttribute("tabindex", "-1");
+      focusTarget.focus({ preventScroll: true });
+    });
+  }));
+  dialog?.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = commandFocusableElements();
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   dialog?.addEventListener("click", (event) => { if (event.target === dialog) closeCommands(); });
-  dialog?.addEventListener("close", () => trigger?.focus());
+  dialog?.addEventListener("close", () => { if (restoreCommandTrigger) trigger?.focus(); });
 
   const sectionLinks = [...document.querySelectorAll(".section-nav a[href^='#']")];
   const markCurrentSection = (id) => sectionLinks.forEach((link) => {

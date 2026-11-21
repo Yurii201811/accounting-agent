@@ -666,7 +666,18 @@ def _manifest(
     schema_version: str,
     mapping_version: str,
     notes: tuple[str, ...] = (),
+    declared_read_capabilities: tuple[ConnectorCapability, ...] = (),
 ) -> ConnectorManifest:
+    capabilities = tuple(
+        CapabilityDeclaration(
+            declaration.capability,
+            CapabilityMode.DECLARED,
+            "Resource is not implemented; the capability remains declaration-only.",
+        )
+        if declaration.capability in declared_read_capabilities
+        else declaration
+        for declaration in _declarations(lifecycle)
+    )
     return ConnectorManifest(
         provider_id=provider_id,
         display_name=display_name,
@@ -674,7 +685,7 @@ def _manifest(
         schema_version=schema_version,
         mapping_version=mapping_version,
         pagination=pagination,
-        capabilities=_declarations(lifecycle),
+        capabilities=capabilities,
         implementation_notes=notes,
     )
 
@@ -716,10 +727,15 @@ CONNECTOR_MANIFESTS: dict[str, ConnectorManifest] = {
     "netsuite": _manifest(
         "netsuite",
         "Oracle NetSuite",
-        ProviderLifecycle.DECLARATION_ONLY,
-        _CURSOR_PAGINATION,
+        ProviderLifecycle.GUARDED_READ_ONLY,
+        _OFFSET_PAGINATION,
         schema_version="2026.1",
         mapping_version="canonical-v1",
+        notes=(
+            "Only fixed, versioned SuiteQL read templates are available through an "
+            "explicitly injected semantic transport; no live transport ships in core.",
+        ),
+        declared_read_capabilities=(ConnectorCapability.READ_TRANSACTIONS,),
     ),
     "oracle_fusion": _manifest(
         "oracle_fusion",

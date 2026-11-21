@@ -184,14 +184,16 @@ or environment drift and any returned provider, binding, schema version,
 mapping version, or cursor outside that preflight contract. This prevents a
 sandbox request from being satisfied by production-scoped adapter state (and
 vice versa). The tests use deterministic fixture and adversarial adapters only.
-This gateway does not configure a live connection, supply credentials, enable
-any write, or turn the declaration-only NetSuite, Oracle, SAP, Odoo, SIE, or CSV
-manifests into implemented connectors.
+This gateway does not configure a live connection, supply credentials, or
+enable any write. The additive offline slice implements only three fixed
+Fortnox master-data resources and four fixed NetSuite SuiteQL master/period
+resources through a caller-injected semantic transport. NetSuite transactions
+and Oracle, SAP, Odoo, SIE, and CSV remain declaration-only.
 
 | Provider | Current v1 status | Intended first integration |
 | --- | --- | --- |
-| Fortnox | local declaration + existing mocked dry run | reference/master reads in a separately approved sandbox |
-| NetSuite | declaration only | OAuth 2.0 role-scoped metadata and read-only SuiteQL |
+| Fortnox | bounded injected master-data reads + existing mocked dry run | separately approved least-privilege transport |
+| NetSuite | four fixed injected SuiteQL master/period reads; transactions unavailable | OAuth 2.0 role-scoped semantic transport |
 | Oracle Fusion Cloud Financials | declaration only | versioned REST metadata and invoice reads |
 | SAP S/4HANA Cloud | declaration only | journal/supplier-invoice observation APIs |
 | Generic | local import/export declaration | CSV, JSON, SIE, Peppol validation fixtures |

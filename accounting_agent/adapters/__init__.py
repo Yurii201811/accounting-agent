@@ -25,6 +25,16 @@ from .gnubok import (
     default_shadow_ledger_adapter,
     mirror_supplier_invoice_proposal_to_shadow,
 )
+from .read_only import (
+    FortnoxReadConnector,
+    NetSuiteSuiteQLReadConnector,
+    RawReadResponse,
+    SemanticReadRequest,
+    SemanticReadTransport,
+    SemanticTransportIdentity,
+    StrictReadDecodeError,
+    decode_raw_json_object,
+)
 
 __all__ = [
     "DEFAULT_FORTNOX_BASE_URL",
@@ -36,8 +46,14 @@ __all__ = [
     "FortnoxProtectedOperation",
     "FortnoxTransport",
     "FortnoxTransportError",
+    "FortnoxReadConnector",
     "LocalGnubokShadowLedgerAdapter",
     "MissingFortnoxCredentials",
+    "NetSuiteSuiteQLReadConnector",
+    "RawReadResponse",
+    "SemanticReadRequest",
+    "SemanticReadTransport",
+    "SemanticTransportIdentity",
     "ShadowAccount",
     "ShadowCompanyContext",
     "ShadowLedgerAdapter",
@@ -45,7 +61,9 @@ __all__ = [
     "ShadowLedgerLine",
     "ShadowLedgerUnavailable",
     "ShadowTransactionDraft",
+    "StrictReadDecodeError",
     "ValidationResult",
     "default_shadow_ledger_adapter",
+    "decode_raw_json_object",
     "mirror_supplier_invoice_proposal_to_shadow",
 ]

@@ -44,8 +44,10 @@ external systems. It does not initialize or mutate the SQLite database.
   boundary.
 - Integrations: capability declarations generated from the provider registry
   for Fortnox, NetSuite, Oracle Fusion, SAP S/4HANA, Odoo, SIE, CSV, and
-  supervised observation-only computer use. Only the guarded Fortnox read
-  contract has a preview implementation; the others are declarations.
+  supervised observation-only computer use. The public core has bounded,
+  injected-transport Fortnox master-data reads and fixed NetSuite SuiteQL
+  master/period reads. The other providers remain declarations, and no row
+  grants a live transport or write capability.
 - How it works: deterministic accounting stages and the bounded specialist-
   agent plan, ending at a human decision gate.
 - Controls and evidence: policy boundaries, grouped local artifacts, and expert

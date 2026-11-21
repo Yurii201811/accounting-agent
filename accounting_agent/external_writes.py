@@ -46,6 +46,8 @@ class ExternalWriteAdapter:
             action_type=action_type,
             payload=payload,
         )
+        if permit is None:  # Defensive type narrowing; the validator fails closed above.
+            raise AssertionError("permit validator returned without a permit")
         return self._execute_with_valid_permit(
             action_type=action_type,
             case_id=case_id,

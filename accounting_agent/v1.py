@@ -42,6 +42,7 @@ from .close import (
 from .connector_contract import (
     ConnectorBinding,
     ConnectorEnvironment,
+    ConnectorHealth,
     ConnectorPage,
     ConnectorReadRequest,
     RetryMetadata,
@@ -81,7 +82,7 @@ class _SyntheticGuardedReadAdapter:
         )
         self.read_calls = 0
 
-    def check_health(self) -> None:
+    def check_health(self) -> ConnectorHealth:
         raise AssertionError("the v1 system check must not call connector health")
 
     def read_page(self, request: ConnectorReadRequest) -> ConnectorPage:

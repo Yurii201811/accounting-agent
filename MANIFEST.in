@@ -1,0 +1,31 @@
+include .gitignore
+include .gitleaks.toml
+include AGENTS.md
+include CHANGELOG.md
+include CODE_OF_CONDUCT.md
+include CONTRIBUTING.md
+include DCO.md
+include GOVERNANCE.md
+include LICENSE
+include NOTICE
+include README.md
+include SECURITY.md
+include favicon.svg
+include package-lock.json
+include package.json
+include playwright.config.ts
+include tokens.css
+include uv.lock
+graft .github
+recursive-include accounting_agent/fixtures *.json *.txt
+recursive-include accounting_agent/static *.css *.svg *.txt
+recursive-include config *.example
+recursive-include docs *.md
+recursive-include fixtures *.json *.txt
+recursive-include qa *.json
+include qa/production-gates.json
+recursive-include reports *.html
+recursive-include scripts *.py
+include scripts/production_readiness.py
+recursive-include spec *.md
+recursive-include tests *.md *.py *.ts

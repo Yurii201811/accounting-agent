@@ -22,10 +22,12 @@ Run the local sample scan:
 
 ```bash
 python -m accounting_agent.cli scan-intake-folder \
-  --folder fixtures/microsoft365_intake \
   --db .local/accounting_agent.sqlite \
   --storage .local/intake_documents
 ```
+
+The default folder is the packaged synthetic Microsoft 365 fixture set. Pass
+`--folder fixtures/microsoft365_intake` to use the checkout copy explicitly.
 
 The scan creates one `document_intake_cases` row per new source file, safely
 copies the file to `.local/intake_documents`, stores the source metadata and

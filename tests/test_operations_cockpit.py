@@ -2,23 +2,69 @@ from __future__ import annotations
 
 import json
 import io
+import os
 import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
+from unittest import mock
 
 from accounting_agent.cli import main as cli_main
 from accounting_agent.operations_cockpit import (
+    ReviewItem,
+    ReviewQueue,
     build_operations_cockpit,
     build_public_preview,
     collect_operations_cockpit_data,
+    render_operations_cockpit,
     verify_generated_links,
 )
 
 
 class OperationsCockpitTests(unittest.TestCase):
+    def test_single_review_item_uses_localized_singular_result_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_cockpit_fixture(root)
+            data = build_operations_cockpit(repo_root=root).data
+            one_item = ReviewItem(
+                item_id="case-1",
+                source="supplier invoice",
+                mode="approval_required",
+                reason="independent review required",
+            )
+            singular_data = replace(
+                data,
+                review_queues=(
+                    ReviewQueue(
+                        key="approval_required",
+                        label="Approval required",
+                        count=1,
+                        items=(one_item,),
+                    ),
+                ),
+            )
+
+            markup = render_operations_cockpit(singular_data)
+
+            self.assertIn('id="review-result-count" aria-live="polite">1 item shown</p>', markup)
+            self.assertIn("visible === 1 ? `${visible} item shown`", markup)
+            self.assertIn("visible === 1 ? `${visible} post visas`", markup)
+
+    def test_connector_copy_requires_tenant_company_and_environment_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            markup = build_public_preview(
+                repo_root=root,
+                output_dir="dist/preview",
+            ).output_path.read_text(encoding="utf-8")
+
+            self.assertIn("Exact tenant, company, and environment binding", markup)
+            self.assertIn("Exakt tenant-, företags- och miljöbindning", markup)
+
     def test_cli_reports_out_of_root_build_error_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             for command in ("build-operations-cockpit", "build-public-preview"):
@@ -245,6 +291,37 @@ class OperationsCockpitTests(unittest.TestCase):
             ):
                 self.assertNotIn(marker, markup)
             _assert_offline_local_only(self, markup)
+
+    def test_public_preview_is_reproducible_with_source_date_epoch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                mock.patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1752192000"}),
+                mock.patch(
+                    "accounting_agent.operations_cockpit._utc_now",
+                    side_effect=(
+                        "2026-07-11T09:00:00+00:00",
+                        "2026-07-11T10:00:00+00:00",
+                    ),
+                ),
+            ):
+                first = build_public_preview(
+                    repo_root=root,
+                    output_dir="dist/preview-one",
+                ).output_path.parent
+                second = build_public_preview(
+                    repo_root=root,
+                    output_dir="dist/preview-two",
+                ).output_path.parent
+
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in first.iterdir()},
+                {path.name: path.read_bytes() for path in second.iterdir()},
+            )
+            manifest = json.loads(
+                (first / "preview-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("2025-07-11T00:00:00+00:00", manifest["generated_at"])
 
     def test_public_preview_refuses_unexpected_files_in_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -35,7 +35,7 @@ Use environment variables or construct `FortnoxConfig` directly.
 ```text
 FORTNOX_ENVIRONMENT=sandbox
 FORTNOX_BASE_URL=https://api.fortnox.se/3
-FORTNOX_ACCESS_TOKEN=
+# Set FORTNOX_ACCESS_TOKEN only in an ignored environment or secret manager.
 FORTNOX_DRY_RUN=true
 FORTNOX_ALLOW_DRAFT_WRITES=false
 FORTNOX_ALLOW_SENSITIVE_READS=false
@@ -47,6 +47,14 @@ Do not commit `.env` files or real tokens. Tests inject a mock transport and do 
 Fortnox currently documents OAuth2 bearer-token API calls with `Authorization: Bearer {Access-Token}` and JSON headers. The adapter's direct REST transport follows that shape, but the transport is replaceable so future code can use direct REST, `fortpyx`, or a restricted MCP wrapper without exposing Fortnox to agents.
 
 ## Read interface
+
+For new provider-neutral orchestration, prefer
+`accounting_agent.adapters.read_only.FortnoxReadConnector`. That public-core
+surface is limited to `accounts`, `suppliers`, and `financial_years`, requires
+an active provider-matching `ConnectorConnection`, and has no default network,
+environment, credential, URL, or generic-request implementation. The older
+`FortnoxAdapter` below remains a separate dry-run/testing boundary. See
+[offline_read_connectors.md](offline_read_connectors.md).
 
 Reference data:
 

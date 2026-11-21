@@ -8,17 +8,17 @@ Goal: identify the correct durable workspace for a Swedish accounting automation
 
 I inspected:
 
-- the current folder: `/Users/yuriibakurov/Documents/Accounting Agent`
-- the workspace registry: `/Users/yuriibakurov/Documents/Codex/WORKSPACES.md`
-- nearby project-like sibling folders under `/Users/yuriibakurov/Documents`
-- the existing Openclaw/Hermes repo at `/Users/yuriibakurov/Documents/New project 5`
+- the current folder: `<accounting-agent-workspace>`
+- the workspace registry: `<workspace-registry>`
+- nearby project-like sibling folders under `<documents-root>`
+- the existing Openclaw/Hermes repo at `<openclaw-hermes-workspace>`
 - the generated Openclaw/Hermes Obsidian mirror
 
 I did not open `.env`, wallet env files, local token files, SQLite row data, or live API configuration values.
 
 ## Current Folder Verdict
 
-`/Users/yuriibakurov/Documents/Accounting Agent` began as an empty durable workspace seed, not an initialized repo and not a working application.
+`<accounting-agent-workspace>` began as an empty durable workspace seed, not an initialized repo and not a working application.
 
 Evidence:
 
@@ -34,16 +34,16 @@ Post-implementation note: the workspace now contains a minimal Python package, t
 
 | Repo or folder | Likely purpose | Tech stack | Important files found | Safe to modify? | Related to accounting-agent? |
 | --- | --- | --- | --- | --- | --- |
-| `/Users/yuriibakurov/Documents/Accounting Agent` | Dedicated accounting-agent workspace seed | None yet | `docs/workspace_inventory.md`, `docs/accounting_agent_architecture.md` after this pass | Yes for docs and future scaffold. No production code or client data exists here yet. | Yes. Recommended target workspace. |
-| `/Users/yuriibakurov/Documents/New project 5` | Openclaw/Hermes OS, a policy-governed local agent operating layer | Python 3.11, pytest, PyYAML, Telethon, SQLite queue, YAML policies/config | `AGENTS.md`, `README.md`, `pyproject.toml`, `orchestrator/`, `config/`, `policies/`, `docs/task_queue.md`, `docs/autonomy_policy.md`, `.local/task_queue.sqlite`, `agents/finance_admin.md`, `trading-agent/` | Read/reference only for this task. It has a very dirty worktree with many modified and untracked files, plus runtime state. | Adjacent but not the target. It has useful governance patterns, but no Fortnox/Capego/SIE/gnubok implementation was found. |
-| `/Users/yuriibakurov/Documents/Openclaw-Hermes-Obsidian` | Generated Obsidian mirror/dashboard for Openclaw/Hermes | Markdown vault | `08 System Architecture/`, `06 Approvals/`, `01 Daily Reports/`, `13 Policies/` | Treat as read-only/export-only unless explicitly scoped. | Related only as reference documentation. It must not become the executable task queue. |
-| `/Users/yuriibakurov/Documents/Codex` | Codex thread scratch, generated reports, temporary artifacts | Mixed scratch artifacts | `WORKSPACES.md` | Usually safe for reports, not for durable source unless promoted. | Not the target. Use only as workspace registry/scratch. |
-| `/Users/yuriibakurov/Documents/New project 2` | BudgetBakers Wallet migration and local CSV write bridge | Node.js script, CSV migration files | `coinkeeper_wallet_migration/README.md`, `wallet_write_bridge/README.md`, `.wallet.env` path exists but was not opened | Do not modify for this task. Contains personal finance migration data and local env material. | Not the target. Financially adjacent but unrelated to Swedish bookkeeping automation. |
-| `/Users/yuriibakurov/Documents/New project` | Empty git repo | Git only | `.git/` | No reason to modify. | No evidence of relevance. |
-| `/Users/yuriibakurov/Documents/New project 3` | Empty git repo | Git only | `.git/` | No reason to modify. | No evidence of relevance. |
-| `/Users/yuriibakurov/Documents/New project 4` | Empty git repo | Git only | `.git/` | No reason to modify. | No evidence of relevance. |
-| `/Users/yuriibakurov/Documents/New project 6` | Empty git repo plus `tmp/` | Git only | `.git/`, `tmp/` | No reason to modify. | No evidence of relevance. |
-| `/Users/yuriibakurov/Documents/New%20project%202` | Artifact-only folder | Unknown/artifacts | `.artifacts/` | No reason to modify. | No evidence of relevance. |
+| `<accounting-agent-workspace>` | Dedicated accounting-agent workspace seed | None yet | `docs/workspace_inventory.md`, `docs/accounting_agent_architecture.md` after this pass | Yes for docs and future scaffold. No production code or client data exists here yet. | Yes. Recommended target workspace. |
+| `<openclaw-hermes-workspace>` | Openclaw/Hermes OS, a policy-governed local agent operating layer | Python 3.11, pytest, PyYAML, Telethon, SQLite queue, YAML policies/config | `AGENTS.md`, `README.md`, `pyproject.toml`, `orchestrator/`, `config/`, `policies/`, `docs/task_queue.md`, `docs/autonomy_policy.md`, `.local/task_queue.sqlite`, `agents/finance_admin.md`, `trading-agent/` | Read/reference only for this task. It had a dirty worktree and runtime state during the original inventory. | Adjacent but not the target. It has useful governance patterns, but no Fortnox/Capego/SIE/gnubok implementation was found. |
+| `<openclaw-hermes-vault>` | Generated Obsidian mirror/dashboard for Openclaw/Hermes | Markdown vault | `08 System Architecture/`, `06 Approvals/`, `01 Daily Reports/`, `13 Policies/` | Treat as read-only/export-only unless explicitly scoped. | Related only as reference documentation. It must not become the executable task queue. |
+| `<codex-workspace>` | Codex task scratch, generated reports, temporary artifacts | Mixed scratch artifacts | `WORKSPACES.md` | Usually safe for reports, not for durable source unless promoted. | Not the target. Use only as workspace registry/scratch. |
+| `<adjacent-finance-workspace>` | Personal-finance migration and local CSV bridge | Node.js script, CSV migration files | Project README files and an unopened local environment path | Do not modify for this task. It contains unrelated local data and environment material. | Not the target. Financially adjacent but unrelated to Swedish bookkeeping automation. |
+| `<unrelated-workspace-1>` | Empty git repo | Git only | `.git/` | No reason to modify. | No evidence of relevance. |
+| `<unrelated-workspace-2>` | Empty git repo | Git only | `.git/` | No reason to modify. | No evidence of relevance. |
+| `<unrelated-workspace-3>` | Empty git repo | Git only | `.git/` | No reason to modify. | No evidence of relevance. |
+| `<unrelated-workspace-4>` | Empty git repo plus `tmp/` | Git only | `.git/`, `tmp/` | No reason to modify. | No evidence of relevance. |
+| `<unrelated-artifact-workspace>` | Artifact-only folder | Unknown/artifacts | `.artifacts/` | No reason to modify. | No evidence of relevance. |
 
 ## Source Search Findings
 
@@ -74,7 +74,7 @@ Important mismatch:
 
 ## Recommendation
 
-Use `/Users/yuriibakurov/Documents/Accounting Agent` as the correct durable target workspace for the Swedish accounting automation build.
+Use `<accounting-agent-workspace>` as the correct durable target workspace for the Swedish accounting automation build.
 
 Rationale:
 
@@ -83,7 +83,7 @@ Rationale:
 - It can reuse Openclaw/Hermes governance ideas without inheriting the dirty worktree, unrelated trading-agent package, Telegram/personal-memory runtime, or broad future-pod surface.
 - It can be initialized with local-first, client-isolated accounting boundaries from day one.
 
-Do not use `/Users/yuriibakurov/Documents/New project 5` as the production accounting-agent repo. Use it as a reference for policy gates, SQLite queue shape, approval logging, audit trail expectations, and role vocabulary only.
+Do not use `<openclaw-hermes-workspace>` as the production accounting-agent repo. Use it as a reference for policy gates, SQLite queue shape, approval logging, audit trail expectations, and role vocabulary only.
 
 ## Missing Information
 

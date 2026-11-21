@@ -1,0 +1,116 @@
+name: Accounting Agent Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: Code scanning
+    # The CodeQL Action is enabled when this intended-open-source repository is public.
+    # Private-repository analysis requires GitHub Code Security and is not assumed here.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Initialize Python analysis
+        uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          languages: python
+          build-mode: none
+      - name: Analyze the revision
+        uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          category: /language:python
+          upload: always
+
+  dependency-audit:
+    name: Static and dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      QA_RUN_DIR: .local/qa/runs/security-audit
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python 3.14
+      - name: Prepare security evidence
+        run: mkdir -p "$QA_RUN_DIR"
+      - name: Scan application source
+        run: >-
+          uv run --frozen --group qa python -m bandit -q -r accounting_agent
+          -f json -o "$QA_RUN_DIR/bandit.json"
+      - name: Export the fully hashed locked dependency graph
+        run: >-
+          uv export --quiet --group qa --no-emit-project --locked
+          --format requirements-txt
+          --output-file "$QA_RUN_DIR/qa-requirements.lock"
+      - name: Audit the fully hashed locked dependency graph
+        run: >-
+          uv run --frozen --group qa python -m pip_audit --strict
+          --require-hashes --disable-pip
+          --requirement "$QA_RUN_DIR/qa-requirements.lock"
+          --format json --output "$QA_RUN_DIR/pip-audit.json"
+      - name: Enforce synthetic fixture and preview privacy policy
+        run: >-
+          uv run --frozen --group qa python scripts/fixture_policy.py --json
+          --output "$QA_RUN_DIR/fixture-policy.json"
+      - name: Upload security evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: static-dependency-audit
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out complete history without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan repository content and history
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

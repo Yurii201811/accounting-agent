@@ -1,0 +1,312 @@
+name: Accounting Agent QA
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACCOUNTING_AGENT_TEST_OFFLINE: "1"
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONHASHSEED: "0"
+
+jobs:
+  source-quality:
+    name: Source quality and traceability
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python 3.14
+      - name: Compile source and test modules
+        run: uv run --frozen --group qa python -m compileall -q accounting_agent scripts tests
+      - name: Lint source, tests, and automation
+        run: uv run --frozen --group qa ruff check .
+      - name: Type-check the application
+        run: uv run --frozen --group qa mypy accounting_agent
+      - name: Validate traceability and workflow contracts
+        run: >-
+          uv run --frozen --group qa python -m unittest
+          tests.test_qa_traceability tests.test_ci_configuration -v
+      - name: Enforce synthetic fixture and preview privacy policy
+        run: >-
+          uv run --frozen --group qa python scripts/fixture_policy.py --json
+
+  python:
+    name: Python ${{ matrix.python-version }} offline suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    env:
+      QA_RUN_DIR: .local/qa/runs/ci-python-${{ matrix.python-version }}
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+      PYTHONPATH: tests/offline_guard
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python "${{ matrix.python-version }}"
+      - name: Prepare evidence directories
+        run: mkdir -p "$QA_RUN_DIR/coverage" "$QA_RUN_DIR/junit"
+      - name: Run the branch-aware offline suite
+        env:
+          COVERAGE_FILE: ${{ env.QA_RUN_DIR }}/coverage/.coverage
+        run: >-
+          uv run --frozen --group qa python -m coverage run --parallel-mode
+          -m pytest -q --junitxml="$QA_RUN_DIR/junit/python.xml"
+      - name: Combine coverage subprocess data
+        env:
+          COVERAGE_FILE: ${{ env.QA_RUN_DIR }}/coverage/.coverage
+        run: uv run --frozen --group qa python -m coverage combine "$QA_RUN_DIR/coverage"
+      - name: Build coverage evidence
+        env:
+          COVERAGE_FILE: ${{ env.QA_RUN_DIR }}/coverage/.coverage
+        run: |
+          uv run --frozen --group qa python -m coverage json -o "$QA_RUN_DIR/coverage/coverage.json"
+          uv run --frozen --group qa python -m coverage xml -o "$QA_RUN_DIR/coverage/coverage.xml"
+          uv run --frozen --group qa python -m coverage html -d "$QA_RUN_DIR/coverage/html"
+      - name: Enforce release coverage thresholds
+        run: >-
+          uv run --frozen --group qa python scripts/coverage_gate.py
+          "$QA_RUN_DIR/coverage/coverage.json" --baseline qa/coverage-baseline.json
+      - name: Upload Python QA evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-${{ matrix.python-version }}-qa
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  platform:
+    name: ${{ matrix.os }} platform contract
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    env:
+      QA_RUN_DIR: .local/qa/runs/ci-platform-${{ matrix.os }}
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python 3.14
+      - name: Run the supported-platform quick gate
+        run: >-
+          uv run --frozen --group qa python scripts/qa.py quick
+          --summary "$QA_RUN_DIR/summary.json"
+      - name: Capture the platform boundary declaration
+        run: >-
+          uv run --frozen --group qa python -m accounting_agent.cli platform-status --json
+          > "$QA_RUN_DIR/platform-status.json"
+      - name: Upload platform evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: platform-${{ matrix.os }}-qa
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  safety-contracts:
+    name: Safety and external-authority contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      QA_RUN_DIR: .local/qa/runs/ci-safety
+      PYTHONPATH: tests/offline_guard
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python 3.14
+      - name: Prepare evidence directories
+        run: mkdir -p "$QA_RUN_DIR/junit"
+      - name: Run fail-closed safety contracts with socket denial
+        run: >-
+          uv run --frozen --group qa pytest -q
+          tests/test_policy_and_permits.py
+          tests/test_permit_approval_bridge_v1.py
+          tests/test_evidence_approvals_v1.py
+          tests/test_autonomy_v1.py
+          tests/test_connector_contract_v1.py
+          tests/test_fortnox_adapter.py
+          tests/test_restricted_fortnox_mcp.py
+          tests/test_qa_runner.py
+          --junitxml="$QA_RUN_DIR/junit/safety.xml"
+      - name: Upload safety evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: safety-contracts
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Reproducible distribution gate
+    needs: [source-quality, python, safety-contracts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      QA_RUN_DIR: .local/qa/runs/ci-package
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python 3.14
+      - name: Build twice and test clean installs
+        run: >-
+          uv run --frozen --group qa python scripts/package_release_check.py
+          --output "$QA_RUN_DIR/package"
+      - name: Upload distribution evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reproducible-distributions
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  ui:
+    name: Browser and accessibility matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      QA_RUN_DIR: .local/qa/runs/ci-ui/playwright
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked Python and browser dependencies
+        run: |
+          uv sync --frozen --group qa --python 3.14
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Exercise all committed browser projects
+        run: npm run test:ui:all
+      - name: Upload browser and accessibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-accessibility-qa
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  required:
+    name: Required Accounting Agent QA gate
+    if: ${{ always() }}
+    needs: [source-quality, python, platform, safety-contracts, package, ui]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every release lane to pass
+        env:
+          SOURCE_QUALITY: ${{ needs.source-quality.result }}
+          PYTHON: ${{ needs.python.result }}
+          PLATFORM: ${{ needs.platform.result }}
+          SAFETY: ${{ needs.safety-contracts.result }}
+          PACKAGE: ${{ needs.package.result }}
+          UI: ${{ needs.ui.result }}
+        run: |
+          python3 - <<'PY'
+          import os
+          results = {
+              name: os.environ[name]
+              for name in ("SOURCE_QUALITY", "PYTHON", "PLATFORM", "SAFETY", "PACKAGE", "UI")
+          }
+          failed = {name: result for name, result in results.items() if result != "success"}
+          if failed:
+              raise SystemExit(f"Required QA lanes did not pass: {failed}")
+          print("All required Accounting Agent QA lanes passed")
+          PY

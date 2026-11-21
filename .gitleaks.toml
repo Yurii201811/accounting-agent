@@ -1,0 +1,14 @@
+title = "Accounting Agent secret-scanning policy"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore generated artifacts and one exact synthetic fixture literal"
+paths = [
+  '''(^|/)(\.artifacts|\.git|\.local|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.venv|__pycache__|build|dist|htmlcov|mutants|node_modules|playwright-report|test-results|venv)(/|$)''',
+  '''(^|/)\.coverage(\..*)?$''',
+  '''\.py[co]$''',
+]
+regexTarget = "secret"
+regexes = ['''^idempotency-1$''']

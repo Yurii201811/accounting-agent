@@ -39,8 +39,9 @@ auditors, and agent operators from the same underlying state:
 - provider-neutral model routing with loopback Ollama invocation and declaration
   contracts for local OpenAI-compatible, OpenAI, Anthropic, Gemini, and Codex
   workspace routes;
-- a guarded read contract for Fortnox and declaration-only contracts for
-  NetSuite, Oracle Fusion, SAP S/4HANA, Odoo, SIE, and CSV;
+- bounded injected-transport master-data reads for Fortnox and fixed SuiteQL
+  master/period reads for NetSuite, while NetSuite transactions, Oracle Fusion,
+  SAP S/4HANA, Odoo, SIE, and CSV remain declaration-only;
 - an offline, bilingual, accessible operations cockpit and a separate
   synthetic-only deploy bundle.
 
@@ -161,7 +162,9 @@ the single read. No environment selection can enable a write capability.
 
 - Fortnox: guarded read-only preview contract plus existing mocked local
   dry-run payload preparation.
-- NetSuite, Oracle Fusion, SAP S/4HANA, and Odoo: declaration only.
+- NetSuite: bounded fixed-template SuiteQL master/period reads through an
+  injected semantic transport; transactions remain declaration only.
+- Oracle Fusion, SAP S/4HANA, and Odoo: declaration only.
 - SIE and CSV: local import/export declarations, not trust boundaries.
 - All external write capabilities: forbidden.
 

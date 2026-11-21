@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "gate_set": "first-real-client-byte",
+  "description": "External and manual evidence required before Accounting Agent may receive any real-client byte.",
+  "default_outcome": "pending",
+  "threat_model_binding": {
+    "repository": "sha256:e7c461de6f8bfd676a7ecb697b004d84d3f30b82258754fd278098a92a1ce766",
+    "version": "41064f2453dfce1b6b5293e533c4568f9da5f740"
+  },
+  "required_control_documents": [
+    "docs/security/threat-model.md",
+    "docs/security/incident-response.md",
+    "docs/compliance/data-map.md",
+    "docs/compliance/dpia.md",
+    "docs/compliance/ropa.md",
+    "docs/compliance/dpa-control-matrix.md",
+    "docs/compliance/subprocessor-policy.md",
+    "docs/compliance/ai-system-inventory.md",
+    "docs/compliance/swedish-accounting-archive-review.md"
+  ],
+  "evidence_policy": {
+    "templates_are_evidence": false,
+    "repository_documents_can_approve": false,
+    "cli_self_attestation_allowed": false,
+    "trusted_external_verifier_configured": false,
+    "note": "Evidence paths are reserved locations only. The current checker does not consume them or turn them into approval."
+  },
+  "gates": [
+    {
+      "id": "privacy-governance-review",
+      "title": "DPA, DPIA, ROPA and subprocessor review",
+      "category": "privacy",
+      "owner_role": "independent privacy counsel or appointed privacy lead",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "external_professional_review",
+      "evidence_location": ".local/production-readiness/evidence/privacy-governance-review.json",
+      "acceptance_criteria": [
+        "Controller and processor roles are decided for each supported workflow.",
+        "DPA, DPIA, ROPA, subprocessor and transfer decisions are approved by accountable owners.",
+        "The accepted scope is bound to a dated product and architecture revision."
+      ]
+    },
+    {
+      "id": "swedish-accounting-archive-review",
+      "title": "Swedish accounting and archive scope review",
+      "category": "accounting-law",
+      "owner_role": "independent Swedish accounting and archive counsel",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "external_professional_review",
+      "evidence_location": ".local/production-readiness/evidence/swedish-accounting-archive-review.json",
+      "acceptance_criteria": [
+        "Supported record classes and excluded record classes are explicit.",
+        "Retention, original-format, presentation, location and migration controls are accepted.",
+        "No blanket Swedish or international compliance claim is introduced."
+      ]
+    },
+    {
+      "id": "tenant-isolation-assurance",
+      "title": "Tenant and legal-entity isolation assurance",
+      "category": "security",
+      "owner_role": "independent security assessor",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "independent_assurance",
+      "evidence_location": ".local/production-readiness/evidence/tenant-isolation-assurance.json",
+      "acceptance_criteria": [
+        "Application authorization, PostgreSQL RLS, composite keys and object access are adversarially tested.",
+        "Cross-tenant and cross-entity access attempts fail at every storage and service boundary.",
+        "No caller-supplied tenant or entity scope is trusted without membership revalidation."
+      ]
+    },
+    {
+      "id": "encryption-key-management-assurance",
+      "title": "Encryption and key-management assurance",
+      "category": "security",
+      "owner_role": "security and key-management owner",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "independent_assurance",
+      "evidence_location": ".local/production-readiness/evidence/encryption-key-management-assurance.json",
+      "acceptance_criteria": [
+        "Encryption at rest and in transit is verified for every authoritative store and backup.",
+        "Tenant and environment context is enforced in key use where the design requires it.",
+        "Rotation, revocation, denial and recovery procedures are exercised."
+      ]
+    },
+    {
+      "id": "archive-retention-worm-assurance",
+      "title": "Archive retention and WORM assurance",
+      "category": "archive",
+      "owner_role": "archive control owner and independent reviewer",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "independent_assurance",
+      "evidence_location": ".local/production-readiness/evidence/archive-retention-worm-assurance.json",
+      "acceptance_criteria": [
+        "Retention calculations are independently checked against the accepted record scope.",
+        "Early deletion and retention shortening are technically impossible for accepted records.",
+        "Legal holds, original preservation, presentation and export are verified."
+      ]
+    },
+    {
+      "id": "audit-anchoring-assurance",
+      "title": "Append-only audit and external anchoring assurance",
+      "category": "audit",
+      "owner_role": "security audit owner",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "independent_assurance",
+      "evidence_location": ".local/production-readiness/evidence/audit-anchoring-assurance.json",
+      "acceptance_criteria": [
+        "Access, model, policy, review, connector, archive and administrative events share one immutable schema.",
+        "Tampering, truncation and cross-tenant substitution are detected.",
+        "Daily roots are signed and retained in an independently controlled immutable account."
+      ]
+    },
+    {
+      "id": "backup-restore-exercise",
+      "title": "Backup, tenant restore and disaster-recovery exercise",
+      "category": "resilience",
+      "owner_role": "service owner and independent exercise observer",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "operational_exercise",
+      "evidence_location": ".local/production-readiness/evidence/backup-restore-exercise.json",
+      "acceptance_criteria": [
+        "Encrypted point-in-time and immutable cross-account backups are restored in an isolated environment.",
+        "A tenant-level restore reproduces independently verified manifests and preserves isolation.",
+        "Measured RPO and RTO satisfy the approved service objectives."
+      ]
+    },
+    {
+      "id": "manual-accessibility-acceptance",
+      "title": "Manual accessibility acceptance",
+      "category": "accessibility",
+      "owner_role": "qualified manual accessibility tester",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "manual_acceptance",
+      "evidence_location": ".local/production-readiness/evidence/manual-accessibility-acceptance.json",
+      "acceptance_criteria": [
+        "VoiceOver, keyboard, zoom and authentication journeys pass on the exact release revision.",
+        "The authenticated locale, mode and role matrix has no unresolved A or AA blocker.",
+        "Evidence identifies tester, environment, revision and tested artifact digest."
+      ]
+    },
+    {
+      "id": "incident-tabletop-notification-test",
+      "title": "Incident tabletop and customer-notification path test",
+      "category": "operations",
+      "owner_role": "incident commander, privacy lead and service owner",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "operational_exercise",
+      "evidence_location": ".local/production-readiness/evidence/incident-tabletop-notification-test.json",
+      "acceptance_criteria": [
+        "Detection, containment, evidence preservation, legal assessment and recovery paths are exercised.",
+        "Regulator, controller and affected-person notification decision paths are timed and documented.",
+        "Exercise findings have owners, deadlines and no unresolved release-blocking item."
+      ]
+    },
+    {
+      "id": "independent-penetration-test",
+      "title": "Independent penetration test",
+      "category": "security",
+      "owner_role": "independent penetration-testing supplier",
+      "required": true,
+      "initial_status": "pending",
+      "automated_verification": false,
+      "verification_mode": "independent_assurance",
+      "evidence_location": ".local/production-readiness/evidence/independent-penetration-test.json",
+      "acceptance_criteria": [
+        "The exact production architecture and supported workflows are assessed.",
+        "No unresolved critical or high finding remains.",
+        "Retest evidence is bound to the remediated release revision."
+      ]
+    }
+  ]
+}

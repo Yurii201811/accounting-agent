@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 import uuid
 from collections.abc import Mapping
 from contextlib import closing
@@ -276,14 +277,21 @@ class PermitStore(Protocol):
 class InMemoryPermitStore:
     def __init__(self) -> None:
         self._permits: dict[str, ExecutionPermit] = {}
+        self._lock = threading.Lock()
 
     def save(self, permit: ExecutionPermit) -> None:
         _require_permit_entity(permit)
         _require_permit_policy_hash(permit)
-        self._permits[permit.permit_id] = permit
+        with self._lock:
+            if permit.permit_id in self._permits:
+                raise PermitValidationError(
+                    "execution permit_id already exists and cannot be replaced"
+                )
+            self._permits[permit.permit_id] = permit
 
     def get(self, permit_id: str) -> ExecutionPermit | None:
-        return self._permits.get(permit_id)
+        with self._lock:
+            return self._permits.get(permit_id)
 
 
 class SQLitePermitStore:
@@ -296,55 +304,68 @@ class SQLitePermitStore:
     def save(self, permit: ExecutionPermit) -> None:
         _require_permit_entity(permit)
         _require_permit_policy_hash(permit)
-        with closing(sqlite3.connect(self.database_path)) as connection:
-            with connection:
-                connection.execute(
-                    """
-                    INSERT OR REPLACE INTO execution_permits (
-                        permit_id,
-                        case_id,
-                        client_id,
-                        allowed_action,
-                        payload_hash,
-                        policy_version,
-                        required_reviews,
-                        permission_mode,
-                        expires_at,
-                        idempotency_key,
-                        issued_at,
-                        entity_id,
-                        policy_decision_hash,
-                        approval_receipt,
-                        approved_reviews
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        permit.permit_id,
-                        permit.case_id,
-                        permit.client_id,
-                        permit.allowed_action.value,
-                        permit.payload_hash,
-                        permit.policy_version,
-                        json.dumps(list(permit.required_reviews), separators=(",", ":")),
-                        permit.permission_mode.value,
-                        permit.expires_at.isoformat(),
-                        permit.idempotency_key,
-                        permit.issued_at.isoformat(),
-                        permit.entity_id,
-                        permit.policy_decision_hash,
+        try:
+            with closing(sqlite3.connect(self.database_path)) as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT INTO execution_permits (
+                            permit_id,
+                            case_id,
+                            client_id,
+                            allowed_action,
+                            payload_hash,
+                            policy_version,
+                            required_reviews,
+                            permission_mode,
+                            expires_at,
+                            idempotency_key,
+                            issued_at,
+                            entity_id,
+                            policy_decision_hash,
+                            approval_receipt,
+                            approved_reviews
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
                         (
+                            permit.permit_id,
+                            permit.case_id,
+                            permit.client_id,
+                            permit.allowed_action.value,
+                            permit.payload_hash,
+                            permit.policy_version,
                             json.dumps(
-                                permit.approval_receipt.to_dict(),
-                                sort_keys=True,
+                                list(permit.required_reviews),
                                 separators=(",", ":"),
-                            )
-                            if permit.approval_receipt is not None
-                            else None
+                            ),
+                            permit.permission_mode.value,
+                            permit.expires_at.isoformat(),
+                            permit.idempotency_key,
+                            permit.issued_at.isoformat(),
+                            permit.entity_id,
+                            permit.policy_decision_hash,
+                            (
+                                json.dumps(
+                                    permit.approval_receipt.to_dict(),
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                )
+                                if permit.approval_receipt is not None
+                                else None
+                            ),
+                            json.dumps(
+                                list(permit.approved_reviews),
+                                separators=(",", ":"),
+                            ),
                         ),
-                        json.dumps(list(permit.approved_reviews), separators=(",", ":")),
-                    ),
-                )
+                    )
+        except sqlite3.IntegrityError as error:
+            if "execution_permits.permit_id" in str(error):
+                raise PermitValidationError(
+                    "execution permit_id already exists and cannot be replaced"
+                ) from error
+            raise PermitValidationError("execution permit could not be persisted") from error
 
     def get(self, permit_id: str) -> ExecutionPermit | None:
         with closing(sqlite3.connect(self.database_path)) as connection:

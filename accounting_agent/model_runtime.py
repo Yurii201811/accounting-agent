@@ -17,9 +17,45 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Final
+from typing import Any, Callable, Final
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+
+class _DuplicateLocalJSONKey(ValueError):
+    pass
+
+
+def _unique_local_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateLocalJSONKey(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json(value: str) -> None:
+    raise ValueError(f"non-finite JSON number is forbidden: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite JSON number is forbidden: {value}")
+    return parsed
+
+
+def _strict_json_object(value: str | bytes) -> dict[str, Any]:
+    parsed = json.loads(
+        value,
+        object_pairs_hook=_unique_local_json_object,
+        parse_constant=_reject_nonfinite_json,
+        parse_float=_parse_finite_json_float,
+    )
+    if not isinstance(parsed, dict):
+        raise ValueError("strict JSON object required")
+    return parsed
 
 
 class ProviderId(str, Enum):
@@ -48,7 +84,8 @@ class DataClassification(str, Enum):
     CONFIDENTIAL_ACCOUNTING = "confidential_accounting"
     PERSONAL_DATA = "personal_data"
     PRIVATE_COURSE = "private_course_material"
-    CREDENTIAL_OR_SECRET = "credential_or_secret"
+    # This is a classification label, never a credential value.
+    CREDENTIAL_OR_SECRET = "credential_or_secret"  # nosec B105
 
 
 class ModelPurpose(str, Enum):
@@ -129,7 +166,7 @@ _PROVIDER_MANIFESTS: Final = {
             provider_id=ProviderId.LOCAL_OPENAI_COMPATIBLE,
             label="Local OpenAI-compatible endpoint",
             network_scope=NetworkScope.LOCALHOST_ONLY,
-            invocation_mode="external_local_adapter_required",
+            invocation_mode="guarded_local_advisory",
             supported_classifications=_NON_SECRET_CLASSIFICATIONS,
             enabled_by_default=True,
         ),
@@ -371,7 +408,7 @@ def local_model_endpoint(endpoint: str) -> str:
     return f"http://{rendered_host}{rendered_port}"
 
 
-_OllamaOpener = Callable[..., object]
+_OllamaOpener = Callable[..., Any]
 
 
 class _RejectRedirects(HTTPRedirectHandler):
@@ -379,7 +416,7 @@ class _RejectRedirects(HTTPRedirectHandler):
         raise OSError("loopback redirect blocked")
 
 
-def _open_loopback_only(request: Request, *, timeout: float) -> object:
+def _open_loopback_only(request: Request, *, timeout: float) -> Any:
     opener = build_opener(ProxyHandler({}), _RejectRedirects())
     return opener.open(request, timeout=timeout)
 
@@ -412,8 +449,8 @@ def discover_ollama(
             raw = response.read(1_000_001)
         if len(raw) > 1_000_000:
             raise ValueError("Ollama response exceeds the discovery size limit")
-        payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        payload = _strict_json_object(raw.decode("utf-8"))
+        if not isinstance(payload.get("models"), list):
             raise ValueError("Ollama response must contain a model list")
 
         models_by_name: dict[str, OllamaModel] = {}
@@ -422,6 +459,8 @@ def discover_ollama(
                 raise ValueError("Ollama model entry must be an object")
             name = raw_model.get("name")
             size = raw_model.get("size")
+            if not isinstance(name, str):
+                raise ValueError("Ollama model name must be a string")
             model = OllamaModel(name=name, size_bytes=size)
             models_by_name[model.name] = model
         models = tuple(models_by_name[name] for name in sorted(models_by_name))
@@ -513,10 +552,40 @@ class OllamaAdvisoryResult:
 
     @property
     def payload(self) -> dict[str, object]:
-        parsed = json.loads(self.payload_json)
-        if not isinstance(parsed, dict):  # defensive; construction is internal
-            raise RuntimeError("stored advisory payload is not a JSON object")
-        return parsed
+        try:
+            return _strict_json_object(self.payload_json)
+        except ValueError as error:
+            raise RuntimeError("stored advisory payload is not a JSON object") from error
+
+    @property
+    def payload_hash(self) -> str:
+        return self.output.payload_hash
+
+
+@dataclass(frozen=True)
+class LocalOpenAICompatibleAdvisoryResult:
+    """Strict local chat-completion payload with no tool or accounting authority."""
+
+    output: AdvisoryModelOutput
+    payload_json: str = field(repr=False)
+    latency_ms: int
+    endpoint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.output, AdvisoryModelOutput):
+            raise TypeError("output must be an AdvisoryModelOutput")
+        if not isinstance(self.payload_json, str) or not self.payload_json:
+            raise ValueError("payload_json must be non-empty")
+        if isinstance(self.latency_ms, bool) or self.latency_ms < 0:
+            raise ValueError("latency_ms must be a non-negative integer")
+        object.__setattr__(self, "endpoint", local_model_endpoint(self.endpoint))
+
+    @property
+    def payload(self) -> dict[str, object]:
+        try:
+            return _strict_json_object(self.payload_json)
+        except ValueError as error:
+            raise RuntimeError("stored advisory payload is not a JSON object") from error
 
     @property
     def payload_hash(self) -> str:
@@ -540,6 +609,8 @@ def invoke_ollama_advisory(
     prompt: str,
     endpoint: str = "http://127.0.0.1:11434",
     allow_local_invocation: bool = False,
+    max_prompt_bytes: int = 100_000,
+    max_response_bytes: int = 1_000_000,
     timeout_seconds: float = 60.0,
     opener: _OllamaOpener = _open_loopback_only,
 ) -> OllamaAdvisoryResult:
@@ -569,8 +640,14 @@ def invoke_ollama_advisory(
         raise ValueError("model_id contains unsupported characters")
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("prompt must be non-empty")
+    for value, field_name, ceiling in (
+        (max_prompt_bytes, "max_prompt_bytes", 100_000),
+        (max_response_bytes, "max_response_bytes", 1_000_000),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= ceiling:
+            raise ValueError(f"{field_name} must be a positive integer within the local ceiling")
     prompt_bytes = prompt.encode("utf-8")
-    if len(prompt_bytes) > 100_000:
+    if len(prompt_bytes) > max_prompt_bytes:
         raise ValueError("prompt exceeds the local advisory size limit")
     if isinstance(timeout_seconds, bool) or not isinstance(
         timeout_seconds,
@@ -595,6 +672,7 @@ def invoke_ollama_advisory(
             "options": {"temperature": 0, "seed": 17},
         },
         ensure_ascii=False,
+        allow_nan=False,
         separators=(",", ":"),
     ).encode("utf-8")
     request = Request(
@@ -610,14 +688,14 @@ def invoke_ollama_advisory(
     started = time.monotonic()
     try:
         with opener(request, timeout=timeout) as response:
-            raw = response.read(1_000_001)
+            raw = response.read(max_response_bytes + 1)
     except OSError as exc:
         raise LocalModelInvocationError("ollama_unavailable") from exc
     latency_ms = max(0, round((time.monotonic() - started) * 1_000))
-    if len(raw) > 1_000_000:
+    if len(raw) > max_response_bytes:
         raise LocalModelInvocationError("ollama_response_too_large")
     try:
-        response_payload = json.loads(raw.decode("utf-8"))
+        response_payload = _strict_json_object(raw.decode("utf-8"))
         message = response_payload["message"]
         content = message["content"]
         if not isinstance(response_payload, dict) or not isinstance(message, dict):
@@ -633,7 +711,7 @@ def invoke_ollama_advisory(
     except (KeyError, TypeError, ValueError, UnicodeError) as exc:
         raise LocalModelInvocationError("invalid_ollama_response") from exc
     try:
-        advisory_payload = json.loads(content)
+        advisory_payload = _strict_json_object(content)
     except (TypeError, ValueError) as exc:
         raise LocalModelInvocationError("strict_json_object_required") from exc
     if not isinstance(advisory_payload, dict):
@@ -641,6 +719,7 @@ def invoke_ollama_advisory(
     payload_json = json.dumps(
         advisory_payload,
         ensure_ascii=False,
+        allow_nan=False,
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -654,6 +733,144 @@ def invoke_ollama_advisory(
         payload_hash=payload_hash,
     )
     return OllamaAdvisoryResult(
+        output=output,
+        payload_json=payload_json,
+        latency_ms=latency_ms,
+        endpoint=base,
+    )
+
+
+def invoke_local_openai_compatible_advisory(
+    *,
+    request_id: str,
+    model_id: str,
+    purpose: ModelPurpose | str,
+    data_classification: DataClassification | str,
+    prompt: str,
+    endpoint: str = "http://127.0.0.1:8080",
+    allow_local_invocation: bool = False,
+    max_prompt_bytes: int = 100_000,
+    max_response_bytes: int = 1_000_000,
+    timeout_seconds: float = 60.0,
+    opener: _OllamaOpener = _open_loopback_only,
+) -> LocalOpenAICompatibleAdvisoryResult:
+    """Invoke one loopback OpenAI-compatible endpoint for strict JSON advice."""
+
+    if allow_local_invocation is not True:
+        raise PermissionError("explicit local invocation opt-in is required")
+    base = local_model_endpoint(endpoint)
+    route_request = ModelRouteRequest(
+        request_id=request_id,
+        purpose=ModelPurpose(purpose),
+        data_classification=DataClassification(data_classification),
+        preferred_provider=ProviderId.LOCAL_OPENAI_COMPATIBLE,
+    )
+    route = plan_model_route(route_request)
+    if route.status is not RouteStatus.ROUTED:
+        reasons = ",".join(route.reason_codes) or "local_route_blocked"
+        raise PermissionError(f"local model route blocked: {reasons}")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("model_id must be non-empty")
+    if len(model_id) > 200 or re.search(r"[\x00-\x1f\x7f]", model_id):
+        raise ValueError("model_id contains unsupported characters")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt must be non-empty")
+    for value, field_name, ceiling in (
+        (max_prompt_bytes, "max_prompt_bytes", 100_000),
+        (max_response_bytes, "max_response_bytes", 1_000_000),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= ceiling:
+            raise ValueError(f"{field_name} must be a positive integer within the local ceiling")
+    if len(prompt.encode("utf-8")) > max_prompt_bytes:
+        raise ValueError("prompt exceeds the local advisory size limit")
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise ValueError("timeout_seconds must be a finite positive number")
+    timeout = float(timeout_seconds)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout_seconds must be a finite positive number")
+    timeout = min(timeout, 180.0)
+
+    body = json.dumps(
+        {
+            "model": model_id.strip(),
+            "stream": False,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": _OLLAMA_ADVISORY_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = Request(
+        f"{base}/v1/chat/completions",
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "accounting-agent-edge-local-advisory/1",
+        },
+        method="POST",
+    )
+    started = time.monotonic()
+    try:
+        with opener(request, timeout=timeout) as response:
+            raw = response.read(max_response_bytes + 1)
+    except OSError as exc:
+        raise LocalModelInvocationError("local_openai_compatible_unavailable") from exc
+    latency_ms = max(0, round((time.monotonic() - started) * 1_000))
+    if len(raw) > max_response_bytes:
+        raise LocalModelInvocationError("local_openai_compatible_response_too_large")
+    try:
+        response_payload = _strict_json_object(raw.decode("utf-8"))
+        choices = response_payload["choices"]
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise TypeError
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise TypeError
+        message = choice["message"]
+        if not isinstance(message, dict):
+            raise TypeError
+        content = message["content"]
+        if (
+            response_payload.get("object") != "chat.completion"
+            or response_payload.get("model") != model_id.strip()
+            or choice.get("finish_reason") != "stop"
+            or message.get("role") != "assistant"
+            or not isinstance(content, str)
+            or "tool_calls" in message
+            or "function_call" in message
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+        raise LocalModelInvocationError("invalid_local_openai_compatible_response") from exc
+    try:
+        advisory_payload = _strict_json_object(content)
+    except (TypeError, ValueError) as exc:
+        raise LocalModelInvocationError("strict_json_object_required") from exc
+    if not isinstance(advisory_payload, dict):
+        raise LocalModelInvocationError("strict_json_object_required")
+    payload_json = json.dumps(
+        advisory_payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    output = AdvisoryModelOutput(
+        output_id=f"local-openai-{payload_hash[:16]}",
+        request_id=route_request.request_id,
+        provider_id=ProviderId.LOCAL_OPENAI_COMPATIBLE,
+        model_id=model_id.strip(),
+        data_classification=route_request.data_classification,
+        payload_hash=payload_hash,
+    )
+    return LocalOpenAICompatibleAdvisoryResult(
         output=output,
         payload_json=payload_json,
         latency_ms=latency_ms,

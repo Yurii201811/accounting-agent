@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from datetime import date
+from importlib import resources
 from pathlib import Path
 
 from accounting_agent.bank_reconciliation import BankReconciliationPipeline
@@ -34,16 +35,28 @@ from accounting_agent.supplier_invoice import SupplierInvoicePipeline
 from accounting_agent.v1 import build_v1_platform_summary, run_v1_synthetic_system_check
 
 
-DEFAULT_FIXTURES = Path("fixtures/supplier_invoices")
-DEFAULT_BANK_FIXTURES = Path("fixtures/bank_reconciliation")
-DEFAULT_M365_FIXTURES = Path("fixtures/microsoft365_intake")
+DEFAULT_FIXTURES = Path(
+    str(resources.files("accounting_agent").joinpath("fixtures", "supplier_invoices"))
+)
+DEFAULT_BANK_FIXTURES = Path(
+    str(resources.files("accounting_agent").joinpath("fixtures", "bank_reconciliation"))
+)
+DEFAULT_M365_FIXTURES = Path(
+    str(resources.files("accounting_agent").joinpath("fixtures", "microsoft365_intake"))
+)
 DEFAULT_DB = Path(".local/accounting_agent.sqlite")
 DEFAULT_OUTPUT = Path(".local/approval_packets")
 DEFAULT_BANK_OUTPUT = Path(".local/bank_reconciliation_packets")
 DEFAULT_INTAKE_STORAGE = Path(".local/intake_documents")
 
 
-def main(argv: list[str] | None = None) -> int:
+class CliInputError(ValueError):
+    """Raised when a local CLI input cannot be processed safely."""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the operator CLI parser for execution and QA contract discovery."""
+
     parser = argparse.ArgumentParser(description="Accounting Agent local operator CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -143,17 +156,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Emit the complete machine-readable system-check result.",
     )
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+
     args = parser.parse_args(argv)
     if args.command == "process-fixtures":
-        pipeline = SupplierInvoicePipeline(
-            db_path=args.db,
-            output_dir=args.output,
-            client_id=args.client_id,
-            entity_id=args.entity_id,
-            evaluation_date=args.as_of,
-        )
-        packets = pipeline.process_fixture_dir(args.fixtures)
-        queue = LocalQueue(args.db)
+        try:
+            _validate_supplier_fixture_dir(args.fixtures)
+            supplier_pipeline = SupplierInvoicePipeline(
+                db_path=args.db,
+                output_dir=args.output,
+                client_id=args.client_id,
+                entity_id=args.entity_id,
+                evaluation_date=args.as_of,
+            )
+            packets = supplier_pipeline.process_fixture_dir(args.fixtures)
+            queue = LocalQueue(args.db)
+        except (OSError, ValueError) as exc:
+            print(f"Supplier fixture processing failed: {exc}", file=sys.stderr)
+            return 1
         print(f"Processed {len(packets)} supplier invoice fixtures")
         print(f"Approval packets: {args.output}")
         print(f"SQLite queue: {args.db}")
@@ -168,8 +192,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "reconcile-bank-fixtures":
-        pipeline = BankReconciliationPipeline(output_dir=args.output)
-        proposals = pipeline.process_fixture_dir(args.fixtures)
+        try:
+            _validate_bank_fixture_dir(args.fixtures)
+            bank_pipeline = BankReconciliationPipeline(output_dir=args.output)
+            proposals = bank_pipeline.process_fixture_dir(args.fixtures)
+        except (OSError, ValueError) as exc:
+            print(f"Bank fixture processing failed: {exc}", file=sys.stderr)
+            return 1
         packet_count = sum(1 for proposal in proposals if proposal.get("approval_packet_path"))
         print(f"Processed {len(proposals)} bank transaction fixtures")
         print(f"Approval packets: {args.output}")
@@ -187,13 +216,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "scan-intake-folder":
-        store = SQLiteIntakeStore(args.db)
-        processor = LocalIntakeProcessor(store=store, storage_root=args.storage)
-        cases = processor.scan_folder(
-            args.folder,
-            source_type=IntakeSourceType(args.source_type),
-        )
-        tasks = store.list_extraction_tasks()
+        try:
+            _validate_intake_fixture_dir(args.folder)
+            store = SQLiteIntakeStore(args.db)
+            processor = LocalIntakeProcessor(store=store, storage_root=args.storage)
+            cases = processor.scan_folder(
+                args.folder,
+                source_type=IntakeSourceType(args.source_type),
+            )
+            tasks = store.list_extraction_tasks()
+        except (OSError, ValueError) as exc:
+            print(f"Intake folder scan failed: {exc}", file=sys.stderr)
+            return 1
         print(f"Scanned {len(cases)} local intake files")
         print(f"SQLite queue: {args.db}")
         print(f"Stored documents: {args.storage}")
@@ -263,40 +297,40 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "build-operations-cockpit":
         try:
-            result = build_operations_cockpit(output_path=args.output)
+            cockpit_result = build_operations_cockpit(output_path=args.output)
         except (OSError, ValueError) as exc:
             print(f"Operations cockpit build failed: {exc}", file=sys.stderr)
             return 1
         print("Operations cockpit built")
-        print(f"Output: {result.output_path}")
-        print(f"Links checked: {result.link_targets_checked}")
-        print(f"Broken links: {len(result.broken_links)}")
+        print(f"Output: {cockpit_result.output_path}")
+        print(f"Links checked: {cockpit_result.link_targets_checked}")
+        print(f"Broken links: {len(cockpit_result.broken_links)}")
         print("Live Fortnox calls: 0")
         print("Live Microsoft 365 calls: 0")
         print("Emails/payments/filings/final postings: 0")
-        if result.broken_links:
-            for path in result.broken_links:
+        if cockpit_result.broken_links:
+            for path in cockpit_result.broken_links:
                 print(f"- broken link target: {path}")
             return 1
         return 0
 
     if args.command == "build-public-preview":
         try:
-            result = build_public_preview(output_dir=args.output)
+            preview_result = build_public_preview(output_dir=args.output)
         except (OSError, ValueError) as exc:
             print(f"Public preview build failed: {exc}", file=sys.stderr)
             return 1
         print("Synthetic public preview built")
-        print(f"Output: {result.output_path}")
-        print(f"Manifest: {result.output_path.parent / 'preview-manifest.json'}")
-        print(f"Links checked: {result.link_targets_checked}")
-        print(f"Broken links: {len(result.broken_links)}")
+        print(f"Output: {preview_result.output_path}")
+        print(f"Manifest: {preview_result.output_path.parent / 'preview-manifest.json'}")
+        print(f"Links checked: {preview_result.link_targets_checked}")
+        print(f"Broken links: {len(preview_result.broken_links)}")
         print(
             "Source artifact links: 0; builder network/hosted-model/ERP-write "
             "capabilities: unavailable"
         )
-        if result.broken_links:
-            for path in result.broken_links:
+        if preview_result.broken_links:
+            for path in preview_result.broken_links:
                 print(f"- broken link target: {path}")
             return 1
         return 0
@@ -325,20 +359,56 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "v1-system-check":
-        result = run_v1_synthetic_system_check()
+        system_result = run_v1_synthetic_system_check()
         if args.json:
-            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            print(json.dumps(system_result, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             print("Accounting Agent v1 synthetic system check")
-            for check, passed in result["checks"].items():
+            for check, passed in system_result["checks"].items():
                 print(f"- {check}: {'pass' if passed else 'fail'}")
-            print(f"Autonomy terminal: {result['autonomy_terminal']}")
-            print(f"Close terminal: {result['close_terminal']}")
+            print(f"Autonomy terminal: {system_result['autonomy_terminal']}")
+            print(f"Close terminal: {system_result['close_terminal']}")
             print("External calls / hosted model calls / ERP writes: 0 / 0 / 0")
-        return 0 if result["passed"] else 1
+        return 0 if system_result["passed"] else 1
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+def _validate_supplier_fixture_dir(path: Path) -> None:
+    _validate_fixture_directory(path, label="Supplier invoice fixture")
+    if not any(path.glob("*.json")):
+        raise CliInputError(
+            f"No supplier invoice .json fixtures found in {path}. "
+            "Add synthetic fixtures or omit --fixtures to use the packaged samples."
+        )
+
+
+def _validate_bank_fixture_dir(path: Path) -> None:
+    _validate_fixture_directory(path, label="Bank fixture")
+    required = ("bank_transactions.json", "open_items.json")
+    missing = [name for name in required if not (path / name).is_file()]
+    if missing:
+        raise CliInputError(
+            f"Bank fixture folder is incomplete: {path}. Missing: {', '.join(missing)}. "
+            "Provide both catalog files or omit --fixtures to use the packaged samples."
+        )
+
+
+def _validate_intake_fixture_dir(path: Path) -> None:
+    _validate_fixture_directory(path, label="Local intake fixture")
+    if not any(item.is_file() for item in path.rglob("*")):
+        raise CliInputError(
+            f"No local intake files found in {path}. "
+            "Add synthetic files or omit --folder to use the packaged samples."
+        )
+
+
+def _validate_fixture_directory(path: Path, *, label: str) -> None:
+    if not path.exists():
+        raise CliInputError(f"{label} folder does not exist: {path}.")
+    if not path.is_dir():
+        raise CliInputError(f"{label} path is not a folder: {path}.")
 
 
 if __name__ == "__main__":

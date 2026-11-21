@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .audit import AuditEvent, JsonlAuditLog
-from .policy import ActionType, PolicyDecision
+from .policy import PolicyDecision
 
 
 class ReviewDecision(str, Enum):

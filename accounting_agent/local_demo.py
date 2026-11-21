@@ -25,7 +25,6 @@ from accounting_agent.intake import (
 )
 from accounting_agent.permits import PermitIssuer, SQLitePermitStore
 from accounting_agent.policy import (
-    ActionType,
     PermissionMode,
     PolicyContext,
     PolicyDecision,
@@ -739,12 +738,13 @@ def _fortnox_rows_from_accounting(
 
 
 def _policy_decision_to_dict(decision: PolicyDecision) -> dict[str, Any]:
+    thresholds = decision.amount_thresholds
     return {
         "action_type": decision.action_type.value,
         "client_id": decision.client_id,
         "permission_mode": decision.permission_mode.value,
         "policy_version": decision.policy_version,
-        "amount_thresholds": asdict(decision.amount_thresholds),
+        "amount_thresholds": asdict(thresholds) if thresholds is not None else None,
         "required_reviews": list(decision.required_reviews),
         "reasons": list(decision.reasons),
         "is_external_write": decision.is_external_write,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +28,21 @@ from accounting_agent.policy import ActionType, POLICY_VERSION
 
 
 DEFAULT_FORTNOX_BASE_URL = "https://api.fortnox.se/3"
+MAX_FORTNOX_RESPONSE_BYTES = 5_000_000
+MAX_FORTNOX_ERROR_BYTES = 64_000
+
+_FORTNOX_HOST = "api.fortnox.se"
+_FORTNOX_BASE_PATH = "/3"
+_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
+_FORTNOX_RESOURCE_DEPTHS = {
+    "accounts": frozenset({0, 1}),
+    "suppliers": frozenset({0, 1}),
+    "customers": frozenset({0, 1}),
+    "financialyears": frozenset({0, 1}),
+    "vouchers": frozenset({0, 2}),
+    "invoices": frozenset({0, 1}),
+    "supplierinvoices": frozenset({0, 1}),
+}
 
 FORBIDDEN_LIVE_ACTIONS = {
     ActionType.POST_VOUCHER,
@@ -90,9 +106,12 @@ class FortnoxConfig:
     allow_sensitive_reads: bool = False
     timeout_seconds: int = 20
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "base_url", _validated_fortnox_base_url(self.base_url))
+
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "FortnoxConfig":
-        source = environ or os.environ
+        source = os.environ if environ is None else environ
         return cls(
             base_url=source.get("FORTNOX_BASE_URL", DEFAULT_FORTNOX_BASE_URL),
             environment=source.get("FORTNOX_ENVIRONMENT", "sandbox"),
@@ -172,10 +191,12 @@ class HttpFortnoxTransport:
             raise FortnoxPolicyViolation(
                 "Only HTTP GET is available through the current Fortnox transport."
             )
+        safe_path = _validated_fortnox_api_path(path)
+        encoded_query = _encoded_query(params)
         access_token = self.config.require_access_token()
-        url = _join_url(self.config.base_url, path)
-        if params:
-            url = f"{url}?{urllib.parse.urlencode(params)}"
+        url = _join_url(self.config.base_url, safe_path)
+        if encoded_query:
+            url = f"{url}?{encoded_query}"
         body = None
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -188,17 +209,36 @@ class HttpFortnoxTransport:
             body = json.dumps(json_body, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
-                response_body = response.read().decode("utf-8")
+            with _open_fortnox_read(
+                request,
+                timeout=self.config.timeout_seconds,
+            ) as response:
+                response_bytes = response.read(MAX_FORTNOX_RESPONSE_BYTES + 1)
+            if len(response_bytes) > MAX_FORTNOX_RESPONSE_BYTES:
+                raise FortnoxTransportError(
+                    "Fortnox response exceeds the configured safety size limit"
+                )
+            response_body = response_bytes.decode("utf-8")
         except urllib.error.HTTPError as error:
-            error_body = error.read().decode("utf-8", errors="replace")
+            try:
+                error_bytes = error.read(MAX_FORTNOX_ERROR_BYTES + 1)
+                truncated = len(error_bytes) > MAX_FORTNOX_ERROR_BYTES
+                error_body = error_bytes[:MAX_FORTNOX_ERROR_BYTES].decode(
+                    "utf-8",
+                    errors="replace",
+                )
+                if truncated:
+                    error_body += " [TRUNCATED]"
+            finally:
+                error.close()
             raise FortnoxTransportError(
                 f"Fortnox {method} {path} failed with HTTP {error.code}: "
-                f"{_redact(error_body)}"
+                f"{_redact(error_body, additional_secrets=(access_token,))}"
             ) from error
         except urllib.error.URLError as error:
             raise FortnoxTransportError(
-                f"Fortnox {method} {path} failed: {_redact(str(error.reason))}"
+                f"Fortnox {method} {path} failed: "
+                f"{_redact(str(error.reason), additional_secrets=(access_token,))}"
             ) from error
         if not response_body:
             return {}
@@ -417,7 +457,8 @@ class FortnoxAdapter:
             action_type=action_type,
             payload=payload,
         )
-        assert permit is not None
+        if permit is None:  # Defensive narrowing; the validator fails closed above.
+            raise FortnoxPolicyViolation("permit validator returned without a permit")
         payload_hash = canonical_payload_hash(payload)
         existing = self.idempotency_store.get(permit.idempotency_key)
         if existing is not None:
@@ -645,13 +686,109 @@ def _blank_to_none(value: str | None) -> str | None:
     return value
 
 
+class _RejectFortnoxRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        raise FortnoxTransportError("Fortnox redirect responses are forbidden")
+
+
+def _open_fortnox_read(
+    request: urllib.request.Request,
+    *,
+    timeout: float,
+) -> Any:
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectFortnoxRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
+
+
+def _validated_fortnox_base_url(value: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise FortnoxPolicyViolation(
+            "Fortnox base_url must use the approved Fortnox HTTPS origin"
+        )
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise FortnoxPolicyViolation(
+            "Fortnox base_url must use the approved Fortnox HTTPS origin"
+        ) from error
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname != _FORTNOX_HOST
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") != _FORTNOX_BASE_PATH
+    ):
+        raise FortnoxPolicyViolation(
+            "Fortnox base_url must use the approved Fortnox HTTPS origin"
+        )
+    return DEFAULT_FORTNOX_BASE_URL
+
+
+def _validated_fortnox_api_path(path: str) -> str:
+    if (
+        not isinstance(path, str)
+        or not path.startswith("/")
+        or path.startswith("//")
+        or "\\" in path
+        or any(ord(character) < 32 or ord(character) == 127 for character in path)
+    ):
+        raise FortnoxPolicyViolation("request path must be a safe Fortnox API path")
+    parsed = urllib.parse.urlsplit(path)
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        raise FortnoxPolicyViolation("request path must be a safe Fortnox API path")
+    segments = path.split("/")[1:]
+    if not segments or any(
+        not segment
+        or segment in {".", ".."}
+        or _SAFE_PATH_SEGMENT.fullmatch(segment) is None
+        for segment in segments
+    ):
+        raise FortnoxPolicyViolation("request path must be a safe Fortnox API path")
+    allowed_depths = _FORTNOX_RESOURCE_DEPTHS.get(segments[0])
+    if allowed_depths is None or len(segments) - 1 not in allowed_depths:
+        raise FortnoxPolicyViolation("request path must be a safe Fortnox API path")
+    return path
+
+
+def _encoded_query(params: Mapping[str, Any] | None) -> str:
+    if params is None:
+        return ""
+    if not isinstance(params, Mapping):
+        raise FortnoxPolicyViolation("Fortnox query parameters must be a mapping")
+    items: list[tuple[str, Any]] = []
+    for key, value in params.items():
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in key)
+            or not isinstance(value, (str, int, float, bool, Decimal))
+        ):
+            raise FortnoxPolicyViolation("Fortnox query parameters must be scalar values")
+        items.append((key, value))
+    return urllib.parse.urlencode(items)
+
+
 def _join_url(base_url: str, path: str) -> str:
     return base_url.rstrip("/") + "/" + path.lstrip("/")
 
 
-def _redact(value: str) -> str:
-    for env_name in ("FORTNOX_ACCESS_TOKEN",):
-        secret = os.environ.get(env_name)
+def _redact(
+    value: str,
+    *,
+    additional_secrets: Sequence[str] = (),
+) -> str:
+    for secret in additional_secrets:
         if secret:
             value = value.replace(secret, "[REDACTED]")
+    for env_name in ("FORTNOX_ACCESS_TOKEN",):
+        environment_secret = os.environ.get(env_name)
+        if environment_secret:
+            value = value.replace(environment_secret, "[REDACTED]")
     return value

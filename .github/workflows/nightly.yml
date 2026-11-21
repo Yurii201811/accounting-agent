@@ -1,0 +1,128 @@
+name: Accounting Agent Scheduled Hardening
+
+on:
+  schedule:
+    - cron: "41 2 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACCOUNTING_AGENT_TEST_OFFLINE: "1"
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONHASHSEED: "0"
+
+jobs:
+  stress:
+    name: Concurrency, recovery, and full QA stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      QA_RUN_DIR: .local/qa/runs/nightly
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked QA and browser dependencies
+        run: |
+          uv sync --frozen --group qa --python 3.14
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Install checksum-pinned Gitleaks CLI
+        run: |
+          mkdir -p "$QA_RUN_DIR/bin"
+          curl --fail --location --silent --show-error \
+            --output "$QA_RUN_DIR/gitleaks.tar.gz" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $QA_RUN_DIR/gitleaks.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "$QA_RUN_DIR/gitleaks.tar.gz" -C "$QA_RUN_DIR/bin" gitleaks
+          echo "$PWD/$QA_RUN_DIR/bin" >> "$GITHUB_PATH"
+      - name: Repeat multiprocessing and storage resilience tests
+        env:
+          PYTHONPATH: tests/offline_guard
+        run: |
+          for attempt in 1 2 3 4 5; do
+            echo "stress attempt $attempt"
+            uv run --frozen --group qa python -m unittest \
+              tests.test_multiprocess_integrity_v1 \
+              tests.test_sqlite_resilience_v1 -v
+          done
+      - name: Run the complete local full-QA interface
+        run: >-
+          uv run --frozen --group qa python scripts/qa.py full
+          --summary "$QA_RUN_DIR/summary.json"
+      - name: Upload scheduled stress evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scheduled-stress-qa
+          path: ${{ env.QA_RUN_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  mutation:
+    name: Safety-critical mutation gate
+    needs: stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      QA_RUN_DIR: .local/qa/runs/mutation
+    steps:
+      - name: Check out the revision without retaining credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked QA environment
+        run: uv sync --frozen --group qa --python 3.14
+      - name: Run configured safety-critical mutations
+        run: uv run --frozen --group qa mutmut run
+      - name: Enforce the curated authority-weakening mutation gate
+        run: >-
+          uv run --frozen --group qa python scripts/mutation_gate.py
+          --output "$QA_RUN_DIR/summary.json"
+      - name: Record mutation results
+        if: ${{ always() }}
+        run: |
+          mkdir -p "$QA_RUN_DIR"
+          uv run --frozen --group qa mutmut results > "$QA_RUN_DIR/results.txt"
+      - name: Upload mutation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: safety-mutation-results
+          path: |
+            ${{ env.QA_RUN_DIR }}
+            mutants
+          if-no-files-found: error
+          retention-days: 14

@@ -74,8 +74,21 @@ class PlatformFoundationTests(unittest.TestCase):
             "mocked_dry_run_only",
             get_erp_profile(ErpProvider.FORTNOX).connection_status,
         )
+        netsuite = get_erp_profile(ErpProvider.NETSUITE)
+        self.assertEqual("guarded_injected_read_only", netsuite.connection_status)
+        self.assertEqual(
+            CapabilityMode.GUARDED_READ_ONLY,
+            netsuite.capability(ErpCapability.READ_MASTER_DATA).mode,
+        )
+        self.assertEqual(
+            CapabilityMode.GUARDED_READ_ONLY,
+            netsuite.capability(ErpCapability.READ_PERIOD_LOCKS).mode,
+        )
+        self.assertEqual(
+            CapabilityMode.DECLARED_NOT_CONNECTED,
+            netsuite.capability(ErpCapability.READ_TRANSACTIONS).mode,
+        )
         for provider in (
-            ErpProvider.NETSUITE,
             ErpProvider.ORACLE_FUSION,
             ErpProvider.SAP_S4HANA,
         ):

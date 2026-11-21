@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import io
+import json
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import patch
 
 from accounting_agent import (
     ActionType,
@@ -10,6 +16,7 @@ from accounting_agent import (
     FortnoxConfig,
     FortnoxPolicyViolation,
     FortnoxProtectedOperation,
+    FortnoxTransportError,
     InMemoryIdempotencyStore,
     MissingFortnoxCredentials,
     PermissionMode,
@@ -18,12 +25,70 @@ from accounting_agent import (
     PolicyContext,
     evaluate_policy,
 )
-from accounting_agent.adapters.fortnox import HttpFortnoxTransport
+from accounting_agent.adapters.fortnox import (
+    HttpFortnoxTransport,
+    _assert_no_forbidden_payload_markers,
+)
 from tests.permit_approval_helpers import issue_test_permit
 
 
 PERMIT_ISSUED_AT = datetime.now(UTC).replace(microsecond=0)
 ENTITY_ID = "synthetic-test-entity"
+MAX_TEST_RESPONSE_BYTES = 5_000_000
+
+
+class FakeHTTPResponse:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+        self.read_limits: list[int] = []
+
+    def __enter__(self) -> "FakeHTTPResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, limit: int = -1) -> bytes:
+        self.read_limits.append(limit)
+        return self.payload if limit < 0 else self.payload[:limit]
+
+
+class FakeOpenerDirector:
+    def __init__(self, response: FakeHTTPResponse) -> None:
+        self.response = response
+        self.calls: list[tuple[urllib.request.Request, float]] = []
+
+    def open(
+        self,
+        request: urllib.request.Request,
+        *,
+        timeout: float,
+    ) -> FakeHTTPResponse:
+        self.calls.append((request, timeout))
+        return self.response
+
+
+class FailingOpenerDirector:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def open(
+        self,
+        request: urllib.request.Request,
+        *,
+        timeout: float,
+    ) -> FakeHTTPResponse:
+        raise self.error
+
+
+class TrackingBytesIO(io.BytesIO):
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self.read_limits: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_limits.append(size)
+        return super().read(size)
 
 
 class MockFortnoxTransport:
@@ -106,6 +171,245 @@ class FortnoxReadTests(unittest.TestCase):
 
         with self.assertRaises(MissingFortnoxCredentials):
             adapter.list_accounts()
+
+
+class HttpFortnoxTransportSecurityTests(unittest.TestCase):
+    def test_config_rejects_unapproved_or_ambiguous_base_urls(self) -> None:
+        unsafe_urls = (
+            "http://api.fortnox.se/3",
+            "https://evil.invalid/3",
+            "https://api.fortnox.se.evil.invalid/3",
+            "https://api.fortnox.se@evil.invalid/3",
+            "https://synthetic-user@api.fortnox.se/3",
+            "https://api.fortnox.se:444/3",
+            "https://api.fortnox.se/3?redirect=https://evil.invalid",
+            "https://api.fortnox.se/3/../other",
+        )
+
+        for base_url in unsafe_urls:
+            with self.subTest(base_url=base_url):
+                with self.assertRaisesRegex(
+                    FortnoxPolicyViolation,
+                    "approved Fortnox HTTPS origin",
+                ):
+                    FortnoxConfig(base_url=base_url, access_token="synthetic-token")
+
+    def test_config_normalizes_the_approved_https_origin(self) -> None:
+        config = FortnoxConfig(
+            base_url="https://API.FORTNOX.SE:443/3/",
+            access_token="synthetic-token",
+        )
+
+        self.assertEqual("https://api.fortnox.se/3", config.base_url)
+
+    def test_explicit_empty_environment_does_not_inherit_process_credentials(self) -> None:
+        with patch.dict(
+            "accounting_agent.adapters.fortnox.os.environ",
+            {"FORTNOX_ACCESS_TOKEN": "ambient-process-token"},
+            clear=True,
+        ):
+            config = FortnoxConfig.from_env({})
+
+        self.assertIsNone(config.access_token)
+
+    def test_invalid_paths_fail_before_any_transport_open(self) -> None:
+        transport = HttpFortnoxTransport(
+            FortnoxConfig(access_token="synthetic-token")
+        )
+        unsafe_paths = (
+            "https://evil.invalid/accounts",
+            "//evil.invalid/accounts",
+            "/../accounts",
+            "/accounts?redirect=https://evil.invalid",
+            "/accounts#fragment",
+            "/accounts\\extra",
+            "/accounts\nextra",
+        )
+
+        for path in unsafe_paths:
+            with self.subTest(path=path):
+                director = FakeOpenerDirector(FakeHTTPResponse(b"{}"))
+                with (
+                    patch(
+                        "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                        side_effect=director.open,
+                    ) as global_open,
+                    patch(
+                        "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                        return_value=director,
+                    ) as build_opener,
+                ):
+                    with self.assertRaisesRegex(
+                        FortnoxPolicyViolation,
+                        "safe Fortnox API path",
+                    ):
+                        transport.get(path)
+
+                self.assertEqual([], director.calls)
+                global_open.assert_not_called()
+                build_opener.assert_not_called()
+
+    def test_query_values_are_encoded_without_changing_the_approved_origin(self) -> None:
+        director = FakeOpenerDirector(
+            FakeHTTPResponse(json.dumps({"Accounts": []}).encode("utf-8"))
+        )
+        transport = HttpFortnoxTransport(
+            FortnoxConfig(access_token="synthetic-token", timeout_seconds=13)
+        )
+        with (
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                side_effect=director.open,
+            ),
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                return_value=director,
+            ),
+        ):
+            result = transport.get(
+                "/accounts",
+                params={"filter": "x&redirect=https://evil.invalid", "page": 1},
+            )
+
+        self.assertEqual({"Accounts": []}, result)
+        request, timeout = director.calls[0]
+        self.assertEqual(13, timeout)
+        parsed = urllib.parse.urlsplit(request.full_url)
+        self.assertEqual(
+            ("https", "api.fortnox.se", "/3/accounts"),
+            (parsed.scheme, parsed.netloc, parsed.path),
+        )
+        self.assertEqual(
+            {"filter": ["x&redirect=https://evil.invalid"], "page": ["1"]},
+            urllib.parse.parse_qs(parsed.query),
+        )
+
+    def test_non_scalar_query_values_fail_before_any_transport_open(self) -> None:
+        director = FakeOpenerDirector(FakeHTTPResponse(b"{}"))
+        transport = HttpFortnoxTransport(
+            FortnoxConfig(access_token="synthetic-token")
+        )
+        with (
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                side_effect=director.open,
+            ) as global_open,
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                return_value=director,
+            ) as build_opener,
+        ):
+            with self.assertRaisesRegex(
+                FortnoxPolicyViolation,
+                "query parameters must be scalar values",
+            ):
+                transport.get("/accounts", params={"page": {"nested": "value"}})
+
+        self.assertEqual([], director.calls)
+        global_open.assert_not_called()
+        build_opener.assert_not_called()
+
+    def test_default_read_opener_disables_proxies_and_rejects_redirects(self) -> None:
+        director = FakeOpenerDirector(FakeHTTPResponse(b"{}"))
+        transport = HttpFortnoxTransport(
+            FortnoxConfig(access_token="synthetic-token")
+        )
+        with (
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                side_effect=director.open,
+            ),
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                return_value=director,
+            ) as build_opener,
+        ):
+            self.assertEqual({}, transport.get("/accounts"))
+
+        build_opener.assert_called_once()
+        handlers = build_opener.call_args.args
+        self.assertEqual({}, handlers[0].proxies)
+        with self.assertRaisesRegex(FortnoxTransportError, "redirect"):
+            handlers[1].redirect_request(None, None, 302, "Found", {}, None)
+
+    def test_response_body_is_read_with_a_hard_size_limit(self) -> None:
+        response = FakeHTTPResponse(b"{" + b" " * MAX_TEST_RESPONSE_BYTES + b"}")
+        director = FakeOpenerDirector(response)
+        transport = HttpFortnoxTransport(
+            FortnoxConfig(access_token="synthetic-token")
+        )
+        with (
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                side_effect=director.open,
+            ),
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                return_value=director,
+            ),
+        ):
+            with self.assertRaisesRegex(FortnoxTransportError, "response exceeds"):
+                transport.get("/accounts")
+
+        self.assertEqual([MAX_TEST_RESPONSE_BYTES + 1], response.read_limits)
+
+    def test_direct_config_token_is_redacted_from_http_errors(self) -> None:
+        token = "synthetic-direct-config-token"
+        error = urllib.error.HTTPError(
+            "https://api.fortnox.se/3/accounts",
+            500,
+            "Synthetic failure",
+            {},
+            io.BytesIO(f"provider echoed {token}".encode("utf-8")),
+        )
+        director = FailingOpenerDirector(error)
+        transport = HttpFortnoxTransport(FortnoxConfig(access_token=token))
+        with (
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                side_effect=director.open,
+            ),
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                return_value=director,
+            ),
+        ):
+            with self.assertRaises(FortnoxTransportError) as raised:
+                transport.get("/accounts")
+
+        self.assertNotIn(token, str(raised.exception))
+        self.assertIn("[REDACTED]", str(raised.exception))
+        self.assertTrue(error.fp.closed)
+
+    def test_http_error_body_is_bounded_and_truncated(self) -> None:
+        error_body = TrackingBytesIO(b"x" * 64_001)
+        error = urllib.error.HTTPError(
+            "https://api.fortnox.se/3/accounts",
+            500,
+            "Synthetic failure",
+            {},
+            error_body,
+        )
+        director = FailingOpenerDirector(error)
+        transport = HttpFortnoxTransport(
+            FortnoxConfig(access_token="synthetic-token")
+        )
+        with (
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.urlopen",
+                side_effect=director.open,
+            ),
+            patch(
+                "accounting_agent.adapters.fortnox.urllib.request.build_opener",
+                return_value=director,
+            ),
+        ):
+            with self.assertRaises(FortnoxTransportError) as raised:
+                transport.get("/accounts")
+
+        self.assertEqual([64_001], error_body.read_limits)
+        self.assertIn("[TRUNCATED]", str(raised.exception))
+        self.assertTrue(error_body.closed)
 
 
 class FortnoxDraftPayloadTests(unittest.TestCase):
@@ -389,6 +693,9 @@ class FortnoxDraftCreateTests(unittest.TestCase):
                 payload=payload,
                 permit=permit,
             )
+
+        with self.assertRaisesRegex(FortnoxProtectedOperation, "sent"):
+            _assert_no_forbidden_payload_markers({"metadata": {"sent": True}})
 
 
 class FortnoxPolicyProtectionTests(unittest.TestCase):

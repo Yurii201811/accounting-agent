@@ -5,6 +5,8 @@ import unittest
 from dataclasses import FrozenInstanceError, replace
 from urllib.error import URLError
 
+import accounting_agent.model_runtime as model_runtime
+
 from accounting_agent.model_runtime import (
     AdvisoryModelOutput,
     BenchmarkDataOrigin,
@@ -42,6 +44,11 @@ class _FakeResponse:
 
     def read(self, limit: int = -1) -> bytes:
         return self._payload[:limit]
+
+
+class _RawResponse(_FakeResponse):
+    def __init__(self, payload: str) -> None:
+        self._payload = payload.encode("utf-8")
 
 
 class ProviderManifestTests(unittest.TestCase):
@@ -494,6 +501,238 @@ class OllamaInvocationTests(unittest.TestCase):
                         prompt="Synthetic fixture only.",
                         allow_local_invocation=True,
                         opener=lambda _request, timeout: _FakeResponse(payload),
+                    )
+
+    def test_invocation_enforces_caller_prompt_and_response_byte_budgets(self) -> None:
+        with self.assertRaisesRegex(ValueError, "prompt exceeds"):
+            invoke_ollama_advisory(
+                request_id="local-budget-1",
+                model_id="qwen3:4b",
+                purpose=ModelPurpose.CLASSIFICATION,
+                data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                prompt="synthetic payload",
+                allow_local_invocation=True,
+                max_prompt_bytes=4,
+                max_response_bytes=1_024,
+                opener=lambda _request, timeout: self._response("{}"),
+            )
+
+        with self.assertRaisesRegex(
+            LocalModelInvocationError,
+            "ollama_response_too_large",
+        ):
+            invoke_ollama_advisory(
+                request_id="local-budget-2",
+                model_id="qwen3:4b",
+                purpose=ModelPurpose.CLASSIFICATION,
+                data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                prompt="synthetic payload",
+                allow_local_invocation=True,
+                max_prompt_bytes=1_024,
+                max_response_bytes=16,
+                opener=lambda _request, timeout: self._response('{"large":"payload"}'),
+            )
+
+    def test_duplicate_and_nonfinite_ollama_json_are_rejected(self) -> None:
+        invalid_content = (
+            '{"decision":"a","decision":"b"}',
+            '{"confidence":NaN}',
+            '{"confidence":1e309}',
+        )
+        for content in invalid_content:
+            with self.subTest(layer="content", content=content):
+                with self.assertRaisesRegex(
+                    LocalModelInvocationError,
+                    "strict_json_object_required",
+                ):
+                    invoke_ollama_advisory(
+                        request_id="ollama-strict-content",
+                        model_id="qwen3:4b",
+                        purpose=ModelPurpose.CLASSIFICATION,
+                        data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                        prompt="Synthetic fixture only.",
+                        allow_local_invocation=True,
+                        opener=lambda _request, timeout, value=content: self._response(value),
+                    )
+
+        invalid_envelopes = (
+            '{"model":"qwen3:4b","model":"qwen3:4b","done":true,'
+            '"message":{"role":"assistant","content":"{}"}}',
+            '{"model":"qwen3:4b","done":true,"metric":Infinity,'
+            '"message":{"role":"assistant","content":"{}"}}',
+            '{"model":"qwen3:4b","done":true,"metric":-1e309,'
+            '"message":{"role":"assistant","content":"{}"}}',
+        )
+        for envelope in invalid_envelopes:
+            with self.subTest(layer="envelope", envelope=envelope):
+                with self.assertRaisesRegex(
+                    LocalModelInvocationError,
+                    "invalid_ollama_response",
+                ):
+                    invoke_ollama_advisory(
+                        request_id="ollama-strict-envelope",
+                        model_id="qwen3:4b",
+                        purpose=ModelPurpose.CLASSIFICATION,
+                        data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                        prompt="Synthetic fixture only.",
+                        allow_local_invocation=True,
+                        opener=lambda _request, timeout, value=envelope: _RawResponse(value),
+                    )
+
+
+class LocalOpenAICompatibleInvocationTests(unittest.TestCase):
+    def test_strict_local_chat_completion_is_hash_bound_and_has_no_tool_surface(self) -> None:
+        invoke = getattr(model_runtime, "invoke_local_openai_compatible_advisory", None)
+        self.assertIsNotNone(invoke)
+        calls: list[tuple[object, float]] = []
+
+        def opener(request: object, *, timeout: float) -> _FakeResponse:
+            calls.append((request, timeout))
+            return _FakeResponse(
+                {
+                    "id": "chatcmpl-synthetic-001",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "local-qwen",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"decision":"human_review","risk_flags":[]}',
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 8,
+                        "total_tokens": 20,
+                    },
+                }
+            )
+
+        result = invoke(
+            request_id="local-openai-1",
+            model_id="local-qwen",
+            purpose=ModelPurpose.CLASSIFICATION,
+            data_classification=DataClassification.PUBLIC_SYNTHETIC,
+            prompt="Generated synthetic invoice fixture.",
+            allow_local_invocation=True,
+            max_prompt_bytes=1_024,
+            max_response_bytes=4_096,
+            timeout_seconds=45,
+            opener=opener,
+        )
+
+        self.assertEqual(result.payload, {"decision": "human_review", "risk_flags": []})
+        self.assertEqual(result.output.provider_id, ProviderId.LOCAL_OPENAI_COMPATIBLE)
+        self.assertFalse(result.output.may_approve)
+        self.assertFalse(result.output.may_execute)
+        self.assertEqual(result.output.payload_hash, result.payload_hash)
+        request, timeout = calls[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8080/v1/chat/completions")
+        self.assertEqual(timeout, 45.0)
+        self.assertNotIn("Authorization", request.headers)
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertNotIn("tools", body)
+        self.assertNotIn("functions", body)
+
+    def test_provider_returned_tool_calls_are_rejected(self) -> None:
+        response = {
+            "id": "chatcmpl-synthetic-tool",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "local-qwen",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "{}",
+                        "tool_calls": [],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+
+        with self.assertRaisesRegex(
+            LocalModelInvocationError,
+            "invalid_local_openai_compatible_response",
+        ):
+            model_runtime.invoke_local_openai_compatible_advisory(
+                request_id="local-openai-tool",
+                model_id="local-qwen",
+                purpose=ModelPurpose.CLASSIFICATION,
+                data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                prompt="Generated synthetic invoice fixture.",
+                allow_local_invocation=True,
+                opener=lambda _request, timeout: _FakeResponse(response),
+            )
+
+    def test_duplicate_and_nonfinite_openai_compatible_json_are_rejected(self) -> None:
+        for content in (
+            '{"decision":"a","decision":"b"}',
+            '{"confidence":-Infinity}',
+            '{"confidence":-1e309}',
+        ):
+            response = {
+                "id": "chatcmpl-synthetic-strict",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "local-qwen",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": content},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+            with self.subTest(layer="content", content=content):
+                with self.assertRaisesRegex(
+                    LocalModelInvocationError,
+                    "strict_json_object_required",
+                ):
+                    model_runtime.invoke_local_openai_compatible_advisory(
+                        request_id="local-openai-strict-content",
+                        model_id="local-qwen",
+                        purpose=ModelPurpose.CLASSIFICATION,
+                        data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                        prompt="Generated synthetic invoice fixture.",
+                        allow_local_invocation=True,
+                        opener=lambda _request, timeout, value=response: _FakeResponse(value),
+                    )
+
+        invalid_envelopes = (
+            '{"object":"chat.completion","model":"local-qwen","model":"local-qwen",'
+            '"choices":[{"index":0,"message":{"role":"assistant","content":"{}"},'
+            '"finish_reason":"stop"}]}',
+            '{"object":"chat.completion","model":"local-qwen","metric":NaN,'
+            '"choices":[{"index":0,"message":{"role":"assistant","content":"{}"},'
+            '"finish_reason":"stop"}]}',
+            '{"object":"chat.completion","model":"local-qwen","metric":1e309,'
+            '"choices":[{"index":0,"message":{"role":"assistant","content":"{}"},'
+            '"finish_reason":"stop"}]}',
+        )
+        for envelope in invalid_envelopes:
+            with self.subTest(layer="envelope", envelope=envelope):
+                with self.assertRaisesRegex(
+                    LocalModelInvocationError,
+                    "invalid_local_openai_compatible_response",
+                ):
+                    model_runtime.invoke_local_openai_compatible_advisory(
+                        request_id="local-openai-strict-envelope",
+                        model_id="local-qwen",
+                        purpose=ModelPurpose.CLASSIFICATION,
+                        data_classification=DataClassification.PUBLIC_SYNTHETIC,
+                        prompt="Generated synthetic invoice fixture.",
+                        allow_local_invocation=True,
+                        opener=lambda _request, timeout, value=envelope: _RawResponse(value),
                     )
 
 

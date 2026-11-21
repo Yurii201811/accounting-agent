@@ -22,6 +22,8 @@ def canonical_client_id(value: str) -> str:
 
     if not isinstance(value, str):
         raise TypeError("client_id must be a string")
+    if any(unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError("client_id must not contain control or invisible format characters")
     if value != value.strip():
         raise ValueError("client_id must not contain leading or trailing whitespace")
     normalized = unicodedata.normalize("NFC", value)

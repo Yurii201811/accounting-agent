@@ -15,6 +15,21 @@ from .client_identity import (
 
 LOCAL_QUEUE_SCHEMA_VERSION = 3
 
+_QUEUE_TABLES = (
+    "intake_cases",
+    "documents",
+    "extracted_fields",
+    "accounting_proposals",
+    "policy_decisions",
+    "approval_packets",
+    "audit_events",
+)
+_JSON_COLUMNS = {
+    "extracted_fields": "payload_json",
+    "accounting_proposals": "proposal_json",
+    "policy_decisions": "decision_json",
+}
+
 
 class QueueSchemaError(RuntimeError):
     """Raised when a queue schema cannot be upgraded without guessing scope."""
@@ -311,12 +326,10 @@ class LocalQueue:
             legacy_case_ids = tuple(str(row["case_id"]) for row in legacy_cases)
             if legacy_case_ids:
                 placeholders = ", ".join("?" for _ in legacy_case_ids)
+                # The interpolated fragment contains only generated parameter markers.
+                legacy_case_update_sql = f"UPDATE intake_cases SET client_id = ?, entity_id = ?, identity_scope_version = ? WHERE case_id IN ({placeholders})"  # nosec B608
                 connection.execute(
-                    f"""
-                    UPDATE intake_cases
-                    SET client_id = ?, entity_id = ?, identity_scope_version = ?
-                    WHERE case_id IN ({placeholders})
-                    """,
+                    legacy_case_update_sql,
                     (
                         canonical_client,
                         canonical_entity,
@@ -331,12 +344,10 @@ class LocalQueue:
                     "approval_packets",
                     "audit_events",
                 ):
+                    # Both identifiers come from local constant allowlists.
+                    legacy_table_update_sql = f"UPDATE {table_name} SET client_id = ?, entity_id = ?, identity_scope_version = ? WHERE case_id IN ({placeholders})"  # nosec B608
                     connection.execute(
-                        f"""
-                        UPDATE {table_name}
-                        SET client_id = ?, entity_id = ?, identity_scope_version = ?
-                        WHERE case_id IN ({placeholders})
-                        """,
+                        legacy_table_update_sql,
                         (
                             canonical_client,
                             canonical_entity,
@@ -529,35 +540,22 @@ class LocalQueue:
                 )
 
     def count(self, table_name: str) -> int:
-        if table_name not in {
-            "intake_cases",
-            "documents",
-            "extracted_fields",
-            "accounting_proposals",
-            "policy_decisions",
-            "approval_packets",
-            "audit_events",
-        }:
+        if table_name not in _QUEUE_TABLES:
             raise ValueError(f"Unsupported table: {table_name}")
         self.initialize()
         with self.session() as connection:
-            row = connection.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
+            # table_name has passed the exact constant allowlist above.
+            count_sql = f"SELECT COUNT(*) AS count FROM {table_name}"  # nosec B608
+            row = connection.execute(count_sql).fetchone()
         return int(row["count"])
 
     @staticmethod
     def _ensure_scope_columns(connection: sqlite3.Connection) -> None:
-        for table_name in (
-            "intake_cases",
-            "documents",
-            "extracted_fields",
-            "accounting_proposals",
-            "policy_decisions",
-            "approval_packets",
-            "audit_events",
-        ):
+        for table_name in _QUEUE_TABLES:
+            table_info_sql = f"PRAGMA table_info({table_name})"
             columns = {
                 row["name"]
-                for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+                for row in connection.execute(table_info_sql).fetchall()
             }
             if "client_id" not in columns:
                 connection.execute(f"ALTER TABLE {table_name} ADD COLUMN client_id TEXT")
@@ -580,20 +578,12 @@ class LocalQueue:
         payload: dict[str, Any],
         updated_at: str,
     ) -> None:
+        if _JSON_COLUMNS.get(table_name) != json_column:
+            raise ValueError("Unsupported queue JSON table or column")
+        # The exact table/column pair is validated by _JSON_COLUMNS above.
+        upsert_sql = f"INSERT INTO {table_name} (case_id, client_id, entity_id, identity_scope_version, {json_column}, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(case_id) DO UPDATE SET client_id = excluded.client_id, entity_id = excluded.entity_id, identity_scope_version = excluded.identity_scope_version, {json_column} = excluded.{json_column}, updated_at = excluded.updated_at"  # nosec B608
         connection.execute(
-            f"""
-            INSERT INTO {table_name} (
-                case_id, client_id, entity_id, identity_scope_version,
-                {json_column}, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(case_id) DO UPDATE SET
-                client_id = excluded.client_id,
-                entity_id = excluded.entity_id,
-                identity_scope_version = excluded.identity_scope_version,
-                {json_column} = excluded.{json_column},
-                updated_at = excluded.updated_at
-            """,
+            upsert_sql,
             (
                 case_id,
                 client_id,

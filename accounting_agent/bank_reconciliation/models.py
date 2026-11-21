@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date as Date
 from enum import Enum
 from typing import Any, Mapping
 
@@ -18,7 +18,7 @@ class MatchTargetType(str, Enum):
 @dataclass(frozen=True)
 class BankTransaction:
     transaction_id: str
-    date: date
+    date: Date
     amount_minor: int
     currency: str
     counterparty: str
@@ -30,7 +30,7 @@ class BankTransaction:
     def from_dict(cls, data: Mapping[str, Any]) -> "BankTransaction":
         return cls(
             transaction_id=str(data["transaction_id"]),
-            date=date.fromisoformat(str(data["date"])),
+            date=Date.fromisoformat(str(data["date"])),
             amount_minor=int(data["amount_minor"]),
             currency=str(data.get("currency") or "SEK"),
             counterparty=str(data.get("counterparty") or ""),
@@ -65,13 +65,13 @@ class BankTransaction:
 class MatchTarget:
     target_id: str
     target_type: MatchTargetType
-    date: date
+    date: Date
     amount_minor: int
     currency: str
     counterparty: str
     reference: str
     source: str
-    due_date: date | None = None
+    due_date: Date | None = None
     remaining_amount_minor: int | None = None
     counterparty_id: str | None = None
     counterparty_known: bool = True
@@ -86,8 +86,8 @@ class MatchTarget:
         return cls(
             target_id=str(data["target_id"]),
             target_type=MatchTargetType(str(data["target_type"])),
-            date=date.fromisoformat(str(data["date"])),
-            due_date=date.fromisoformat(str(due_date)) if due_date else None,
+            date=Date.fromisoformat(str(data["date"])),
+            due_date=Date.fromisoformat(str(due_date)) if due_date else None,
             amount_minor=int(data["amount_minor"]),
             remaining_amount_minor=(
                 int(data["remaining_amount_minor"])

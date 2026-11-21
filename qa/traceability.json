@@ -1,0 +1,352 @@
+{
+  "schema_version": 1,
+  "release": "1.0.0",
+  "owner": "Accounting Agent QA",
+  "user_stories": [
+    {
+      "id": "QA-US-001",
+      "persona": "Small-firm accountant",
+      "need": "Run a controlled synthetic intake and understand which work is ready or blocked.",
+      "acceptance_criteria": ["Intake stays client-scoped", "Guided copy is understandable", "No external system is contacted"],
+      "test_evidence": ["tests/test_microsoft365_intake.py", "tests/test_operations_cockpit.py"]
+    },
+    {
+      "id": "QA-US-002",
+      "persona": "Accountant",
+      "need": "Prepare supplier-invoice accounting while duplicates, unknown suppliers, bank changes, uncertain VAT, and locked periods stop safely.",
+      "acceptance_criteria": ["Normal synthetic invoices produce drafts", "Every defined risk reaches human review or a stricter stop", "No final posting occurs"],
+      "test_evidence": ["tests/test_supplier_invoice_pipeline.py", "tests/test_openclaw_risk_review.py"]
+    },
+    {
+      "id": "QA-US-003",
+      "persona": "Accountant",
+      "need": "Reconcile exact, partial, duplicate-looking, fee, large unknown, and unmatched bank transactions without double consumption.",
+      "acceptance_criteria": ["Candidate scoring is deterministic", "One target cannot be consumed twice", "Ambiguity produces review evidence"],
+      "test_evidence": ["tests/test_bank_reconciliation_autopilot.py", "tests/test_locale_and_reconciliation_safety.py"]
+    },
+    {
+      "id": "QA-US-004",
+      "persona": "Senior accountant and financial controller",
+      "need": "Review escalations, enforce segregation of duties, and assess period-close readiness without allowing the agent to lock a period.",
+      "acceptance_criteria": ["Approval and permit scopes match exactly", "Preparer and reviewer identities differ", "Close ends at a human decision"],
+      "test_evidence": ["tests/test_permit_approval_bridge_v1.py", "tests/test_close_v1.py"]
+    },
+    {
+      "id": "QA-US-005",
+      "persona": "Auditor",
+      "need": "Verify source provenance, immutable decisions, evidence hashes, and tamper detection across exact client and entity scopes.",
+      "acceptance_criteria": ["Hash-chain mutation is detected", "Cross-entity reuse is rejected", "Audit evidence is append-only"],
+      "test_evidence": ["tests/test_evidence_approvals_v1.py", "tests/test_repository_safety.py"]
+    },
+    {
+      "id": "QA-US-006",
+      "persona": "Agent operator",
+      "need": "Run bounded preparation with checkpoint, resume, cancellation, lease recovery, and independent review.",
+      "acceptance_criteria": ["Completed stages do not repeat", "Cancellation wins", "Terminal state is awaiting human decision"],
+      "test_evidence": ["tests/test_autonomy_v1.py", "tests/test_v1_integration.py"]
+    },
+    {
+      "id": "QA-US-007",
+      "persona": "ERP integrator",
+      "need": "Evaluate Fortnox, NetSuite, Oracle, SAP, Odoo, SIE, and CSV through one fail-closed connector contract.",
+      "acceptance_criteria": ["Tenant, client, legal entity, source company, environment, schema, cursor, exact request hash, and exact raw hash remain bound", "Fortnox master-data reads and fixed NetSuite SuiteQL master/period templates require an active provider-matching connection and immutable matching transport identity", "Cross-scope replay, mutable evidence, duplicate JSON keys, non-finite or out-of-range numbers, and transport drift fail closed", "No default network, credential, URL, generic SQL, reconciliation-success, or external-write surface exists"],
+      "test_evidence": ["tests/test_connector_contract_v1.py", "tests/test_offline_read_connectors.py", "tests/test_fortnox_adapter.py", "tests/test_restricted_fortnox_mcp.py"]
+    },
+    {
+      "id": "QA-US-008",
+      "persona": "Model operator",
+      "need": "Use deterministic or local advisory models without exposing credentials or granting execution authority.",
+      "acceptance_criteria": ["Confidential data routes locally", "Hosted and Codex providers stay disabled by default", "Model output cannot approve or execute"],
+      "test_evidence": ["tests/test_model_runtime_v1.py", "tests/test_autonomy_v1.py"]
+    },
+    {
+      "id": "QA-US-009",
+      "persona": "International accountant",
+      "need": "Represent currencies, locale-specific amounts, FX evidence, and jurisdiction packs without pretending unsupported tax compliance.",
+      "acceptance_criteria": ["Zero, two, and three-decimal currencies round correctly", "FX is evidence-bound", "Unknown precision and unsupported compliance fail closed"],
+      "test_evidence": ["tests/test_money_and_journal_v1.py", "tests/test_locale_and_reconciliation_safety.py", "tests/test_platform_foundation.py"]
+    },
+    {
+      "id": "QA-US-010",
+      "persona": "Public preview viewer",
+      "need": "Inspect a useful synthetic demonstration without local files, private course material, secrets, or external authority.",
+      "acceptance_criteria": ["Bundle contains exactly the allowed files", "No local source link or private marker is present", "Runtime requests stay inside the preview bundle"],
+      "test_evidence": ["tests/test_operations_cockpit.py", "tests/ui/cockpit-boundaries.spec.ts"]
+    },
+    {
+      "id": "QA-US-011",
+      "persona": "Beginner and professional user",
+      "need": "Use English or Swedish, Guided or Expert detail, and any role perspective with accessible keyboard behavior.",
+      "acceptance_criteria": ["All 24 locale, mode, and role combinations preserve safety truth", "Keyboard and focus flows complete", "WCAG 2.2 A and AA automated checks have no violations"],
+      "test_evidence": ["tests/ui/cockpit-matrix.spec.ts", "tests/ui/cockpit-accessibility.spec.ts", "tests/ui/cockpit-interactions.spec.ts", "docs/qa/accessibility-checklist.md"]
+    },
+    {
+      "id": "QA-US-012",
+      "persona": "Adversarial caller and failure operator",
+      "need": "Prove forged permits, replay, redirects, proxies, hostile paths, corrupted state, and concurrency cannot bypass accounting controls.",
+      "acceptance_criteria": ["Invalid preflight performs zero network calls", "Duplicate permit IDs never replace trusted records", "Crash and concurrency recovery preserve scope and integrity"],
+      "test_evidence": ["tests/test_policy_and_permits.py", "tests/test_permit_approval_bridge_v1.py", "tests/test_fortnox_adapter.py", "tests/test_offline_read_connectors.py", "tests/test_autonomy_v1.py"]
+    },
+    {
+      "id": "QA-US-013",
+      "persona": "Archive administrator and auditor",
+      "need": "Preserve typed document provenance, processing lineage, retention, legal holds, and signatures across exact tenant and entity scope without storing raw document data in control records.",
+      "acceptance_criteria": ["Every top-level wire envelope is immutable and versioned", "Unknown classifications and incomplete archive evidence fail closed", "Retention cannot shorten and active legal holds cannot disappear"],
+      "test_evidence": ["tests/test_production_contracts_scope_archive.py"]
+    },
+    {
+      "id": "QA-US-014",
+      "persona": "Agent operator and draft-gateway integrator",
+      "need": "Reserve each exact provider draft attempt durably so replay, crash recovery, ambiguity, and concurrent workers cannot duplicate or re-scope an external action.",
+      "acceptance_criteria": ["Every idempotency key is atomically bound to an immutable execution scope", "Completed and unknown outcomes are terminal and tamper-resistant", "Ambiguous outcomes require human review and never retry automatically"],
+      "test_evidence": ["tests/test_execution_attempts.py"]
+    },
+    {
+      "id": "QA-US-015",
+      "persona": "Accountant, controller, and auditor",
+      "need": "Exchange typed supplier, invoice, journal, balance, period, and dimension facts with exact scope and source provenance instead of arbitrary connector mappings.",
+      "acceptance_criteria": ["Money stays in the cross-language interoperable integer range and journals balance", "Locked periods and terminal lifecycle states cannot silently regress or reactivate", "Bank data is fingerprint-only and provenance binds the exact sync evidence"],
+      "test_evidence": ["tests/test_production_contracts_canonical.py"]
+    },
+    {
+      "id": "QA-US-016",
+      "persona": "Connector operator and enterprise controller",
+      "need": "Run read-only connector synchronization with exact environment, cursor, snapshot, canonical-record, and source-reconciliation evidence.",
+      "acceptance_criteria": ["Write capabilities are structurally rejected", "Checkpoint chains are ordered and cursor-continuous", "A run completes only when every requested source count and hash reconciles"],
+      "test_evidence": ["tests/test_production_contracts_sync.py"]
+    },
+    {
+      "id": "QA-US-017",
+      "persona": "Independent reviewer and draft-gateway operator",
+      "need": "Record authenticated approval decisions and exact supplier-invoice draft envelopes without granting posting authority or retrying ambiguous outcomes.",
+      "acceptance_criteria": ["Self-review and weak authentication are rejected", "Drafts bind policy, approval receipt, approval decision, permit, evidence, connection, and payload hashes", "Only an exact read-back of an unbooked reversible draft avoids a connection freeze"],
+      "test_evidence": ["tests/test_production_contracts_commands.py"]
+    },
+    {
+      "id": "QA-US-018",
+      "persona": "Tenant model administrator and security reviewer",
+      "need": "Qualify one advisory model provider with explicit data, region, retention, redaction, consent, evaluation, and budget limits and no silent fallback.",
+      "acceptance_criteria": ["Credentials never route to a model and private course data stays local", "Hosted sensitive data requires reviewed provider evidence and redaction", "Consent changes require a later timestamp and new authenticated evidence", "Policy successors can only narrow capability and no model can approve or execute", "Cross-language consumers reproduce the exact canonical hash vectors"],
+      "test_evidence": ["tests/test_production_contracts_model.py", "tests/test_production_contract_vectors.py"]
+    },
+    {
+      "id": "QA-US-019",
+      "persona": "Local Edge Worker operator and security reviewer",
+      "need": "Run a synthetic Ollama or local OpenAI-compatible advisory job with exact scope, evidence, budget, deadline and signed structured output but no accounting or tool authority.",
+      "acceptance_criteria": ["Only explicit loopback local-model calls are available", "Jobs and results bind exact tenant, client, legal entity, case, evidence, provider, model and prompt hashes", "The tool inventory stays empty and model output cannot approve, execute, call connectors or use ERP credentials", "Ed25519 signatures detect tampering and process-local replay while deterministic human review remains mandatory"],
+      "test_evidence": ["tests/test_edge_worker.py", "tests/test_model_runtime_v1.py"]
+    }
+  ],
+  "public_python_api_groups": [
+    {
+      "module": "metadata",
+      "members": ["DEFAULT_FORTNOX_BASE_URL", "V1_RELEASE", "__version__"],
+      "story_ids": ["QA-US-006", "QA-US-007"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.accounting.bas",
+      "members": ["AccountPlan", "BasAccount"],
+      "story_ids": ["QA-US-002", "QA-US-009"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.accounting.proposals",
+      "members": ["AccountingEntry", "SupplierInvoiceProposal", "fortnox_supplier_invoice_payload", "supplier_invoice_proposal_from_dict"],
+      "story_ids": ["QA-US-002", "QA-US-007"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.accounting.vat",
+      "members": ["PurchaseVATMapping", "expected_purchase_vat_mapping"],
+      "story_ids": ["QA-US-002", "QA-US-009"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.adapters.fortnox",
+      "members": ["FortnoxAdapter", "FortnoxAdapterError", "FortnoxConfig", "FortnoxDraftResult", "FortnoxPolicyViolation", "FortnoxProtectedOperation", "FortnoxTransport", "FortnoxTransportError", "MissingFortnoxCredentials"],
+      "story_ids": ["QA-US-007", "QA-US-012"],
+      "safety_class": "forbidden_external"
+    },
+    {
+      "module": "accounting_agent.adapters.gnubok",
+      "members": ["LocalGnubokShadowLedgerAdapter", "ShadowLedgerComparison", "ShadowLedgerUnavailable", "mirror_supplier_invoice_proposal_to_shadow"],
+      "story_ids": ["QA-US-002", "QA-US-005"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.adapters.read_only",
+      "members": ["FortnoxReadConnector", "NetSuiteSuiteQLReadConnector", "RawReadResponse", "SemanticReadRequest", "SemanticReadTransport", "SemanticTransportIdentity", "StrictReadDecodeError", "decode_raw_json_object"],
+      "story_ids": ["QA-US-007", "QA-US-012", "QA-US-016"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.agentic",
+      "members": ["AgentBudget", "AgenticWorkPlan", "EvidenceReference", "InterfaceMode", "RoleProfile", "SpecialistDefinition", "SpecialistId", "agentic_platform_summary", "build_agentic_work_plan", "list_role_profiles"],
+      "story_ids": ["QA-US-006", "QA-US-011"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.audit",
+      "members": ["AuditEvent", "JsonlAuditLog"],
+      "story_ids": ["QA-US-005", "QA-US-012"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.bank_reconciliation",
+      "members": ["BankReconciliationPipeline", "BankTransaction", "MatchCandidate", "MatchTarget", "MatchTargetType", "build_candidates", "build_reconciliation_proposal", "load_fixture_catalog"],
+      "story_ids": ["QA-US-003"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.connector_contract",
+      "members": ["ConnectorBinding", "ConnectorEnvironment"],
+      "story_ids": ["QA-US-007", "QA-US-012"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.contracts.scope",
+      "members": ["AuthenticationStrength", "MembershipRole", "TenantContext"],
+      "story_ids": ["QA-US-004", "QA-US-012"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.contracts.archive",
+      "members": ["ArchiveManifestV1", "ArchiveProcessingEntry", "ArchiveSignature", "DocumentClassification", "DocumentProvenance", "DocumentRecord", "LegalHoldState", "MalwareStatus", "PolicyPurpose", "PolicyVersion", "ProcessingAction", "ProvenanceSource", "QuarantineState", "RecordClass", "RetentionClass", "SignatureAlgorithm", "StorageRegion"],
+      "story_ids": ["QA-US-005", "QA-US-009", "QA-US-013"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.contracts.canonical",
+      "members": ["BankDetailsState", "CanonicalBalance", "CanonicalDimension", "CanonicalInvoice", "CanonicalJournal", "CanonicalPeriod", "CanonicalSupplier", "DimensionAssignment", "InvoiceKind", "InvoiceLine", "InvoiceStatus", "JournalLine", "JournalStatus", "LifecycleStatus", "PeriodState", "RecordSource"],
+      "story_ids": ["QA-US-005", "QA-US-009", "QA-US-015"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.contracts.commands",
+      "members": ["ApprovalDecisionCommand", "ApprovalDecisionOutcome", "DraftComparisonStatus", "DraftReadbackStatus", "ExternalDraftCommand", "ExternalDraftObservedState", "ExternalDraftReceipt", "ExternalDraftRecordType"],
+      "story_ids": ["QA-US-004", "QA-US-012", "QA-US-014", "QA-US-017"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.contracts.model",
+      "members": ["ModelRoutePolicy", "ProcessingRegion", "RedactionMode"],
+      "story_ids": ["QA-US-008", "QA-US-012", "QA-US-018"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.contracts.sync",
+      "members": ["ConnectorConnection", "ConnectorConnectionStatus", "ReconciliationStatus", "SourceReconciliation", "SyncCheckpoint", "SyncRun", "SyncRunStatus"],
+      "story_ids": ["QA-US-007", "QA-US-012", "QA-US-016"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.execution_attempts",
+      "members": ["EXECUTION_ATTEMPT_SCHEMA_VERSION", "ExecutionAttempt", "ExecutionAttemptConflict", "ExecutionAttemptError", "ExecutionAttemptHumanReviewRequired", "ExecutionAttemptIntegrityError", "ExecutionAttemptSchemaError", "ExecutionAttemptScope", "ExecutionAttemptState", "ExecutionAttemptTransitionError", "SQLiteExecutionAttemptStore"],
+      "story_ids": ["QA-US-004", "QA-US-012", "QA-US-014"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.documents",
+      "members": ["InvoiceMetadata", "extract_invoice_metadata", "file_sha256"],
+      "story_ids": ["QA-US-001", "QA-US-005"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.erp",
+      "members": ["COMPUTER_USE_BOUNDARY", "CapabilityDeclaration", "CapabilityMode", "ComputerUseBoundary", "ErpCapability", "ErpProfile", "ErpProvider", "assert_fail_closed_registry", "erp_registry_summary", "get_erp_profile", "list_erp_profiles"],
+      "story_ids": ["QA-US-007", "QA-US-011"],
+      "safety_class": "forbidden_external"
+    },
+    {
+      "module": "accounting_agent.external_writes",
+      "members": ["EmailWriteAdapter", "ExternalWriteAdapter", "ExternalWriteResult", "FortnoxWriteAdapter"],
+      "story_ids": ["QA-US-007", "QA-US-012"],
+      "safety_class": "forbidden_external"
+    },
+    {
+      "module": "accounting_agent.hermes",
+      "members": ["ApprovalPacket", "MissingInfoEmailDraft", "MissingInfoReason", "ProposedAccountingEntry", "ReviewDecision", "draft_missing_info_email", "record_approval_decision", "render_approval_packet", "render_email_draft", "write_approval_packet"],
+      "story_ids": ["QA-US-002", "QA-US-004"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.idempotency",
+      "members": ["IdempotencyRecord", "IdempotencyStore", "InMemoryIdempotencyStore"],
+      "story_ids": ["QA-US-006", "QA-US-012"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.intake",
+      "members": ["ClientMapper", "ClientMappingResult", "ClientMappingRule", "ExtractionTask", "IntakeCase", "IntakeSource", "IntakeSourceType", "LocalIntakeProcessor", "SQLiteIntakeStore", "manual_upload_source", "onedrive_file_source", "outlook_attachment_source", "teams_message_file_source"],
+      "story_ids": ["QA-US-001", "QA-US-012"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.jurisdictions",
+      "members": ["CurrencySpec", "JurisdictionPack", "TaxRuleMetadata", "get_currency_spec", "get_jurisdiction_pack", "jurisdiction_registry_summary", "list_jurisdiction_packs"],
+      "story_ids": ["QA-US-009"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.permits",
+      "members": ["ExecutionPermit", "InMemoryPermitStore", "PermitApprovalReceipt", "PermitError", "PermitForbidden", "PermitIssuer", "PermitReviewRequired", "PermitValidationError", "PermitValidator", "SQLitePermitStore", "TrustedApprovalAuthority", "build_permit_approval_request", "canonical_payload_hash", "canonical_policy_decision_hash"],
+      "story_ids": ["QA-US-004", "QA-US-012"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.policy",
+      "members": ["ActionType", "AmountThresholds", "PermissionMode", "PolicyConfig", "PolicyContext", "PolicyDecision", "evaluate_policy"],
+      "story_ids": ["QA-US-002", "QA-US-003", "QA-US-004", "QA-US-012"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.reports",
+      "members": ["RiskReport", "build_risk_report"],
+      "story_ids": ["QA-US-004", "QA-US-005"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.restricted_fortnox_mcp",
+      "members": ["MCPPermissionMode", "RestrictedFortnoxMCP", "RestrictedMCPError", "RestrictedToolForbidden", "RestrictedToolMetadata", "RestrictedToolPermitError", "ToolCallAuditLog", "ToolCallLogEntry", "UnknownRestrictedTool"],
+      "story_ids": ["QA-US-007", "QA-US-012"],
+      "safety_class": "forbidden_external"
+    },
+    {
+      "module": "accounting_agent.edge_worker",
+      "members": ["EDGE_ADVISORY_CAPABILITY", "EdgeAdvisoryBudget", "EdgeAdvisoryJobV1", "EdgeAdvisoryResultV1", "EdgeJobBudgetExceeded", "EdgeJobExpired", "EdgeResultReplayError", "EdgeResultSignature", "EdgeResultVerificationError", "LocalEd25519Signer", "LocalEd25519Verifier", "LocalEdgeReplayGuard", "SignedEdgeAdvisoryResultV1", "edge_worker_authority_manifest", "run_edge_advisory_job", "sign_edge_result", "verify_signed_edge_result"],
+      "story_ids": ["QA-US-008", "QA-US-012", "QA-US-019"],
+      "safety_class": "safety_critical"
+    },
+    {
+      "module": "accounting_agent.risk_review",
+      "members": ["AccountingCase", "AccountingCaseType", "InvoiceHistoryEntry", "RiskFinding", "RiskPolicyImpact", "RiskReviewConfig", "RiskSeverity", "RiskSignal", "review_accounting_case"],
+      "story_ids": ["QA-US-002", "QA-US-004"],
+      "safety_class": "review_only"
+    },
+    {
+      "module": "accounting_agent.v1",
+      "members": ["build_v1_platform_summary", "run_v1_synthetic_system_check"],
+      "story_ids": ["QA-US-006", "QA-US-007", "QA-US-009"],
+      "safety_class": "deterministic"
+    },
+    {
+      "module": "accounting_agent.workflow",
+      "members": ["CaseReviewResult", "review_supplier_invoice_case"],
+      "story_ids": ["QA-US-002", "QA-US-004"],
+      "safety_class": "review_only"
+    }
+  ],
+  "cli_commands": [
+    {"name": "process-fixtures", "story_ids": ["QA-US-002"], "safety_class": "review_only"},
+    {"name": "reconcile-bank-fixtures", "story_ids": ["QA-US-003"], "safety_class": "review_only"},
+    {"name": "scan-intake-folder", "story_ids": ["QA-US-001"], "safety_class": "deterministic"},
+    {"name": "demo-supplier-invoice-autopilot", "story_ids": ["QA-US-002", "QA-US-006"], "safety_class": "review_only"},
+    {"name": "fake-client-dry-run", "story_ids": ["QA-US-002", "QA-US-003"], "safety_class": "review_only"},
+    {"name": "build-operations-cockpit", "story_ids": ["QA-US-010", "QA-US-011"], "safety_class": "deterministic"},
+    {"name": "build-public-preview", "story_ids": ["QA-US-010"], "safety_class": "deterministic"},
+    {"name": "platform-status", "story_ids": ["QA-US-006", "QA-US-007", "QA-US-009"], "safety_class": "deterministic"},
+    {"name": "v1-system-check", "story_ids": ["QA-US-006", "QA-US-012"], "safety_class": "deterministic"}
+  ],
+  "cockpit_sections": ["today", "setup", "review", "close", "automation", "integrations", "workflow", "controls"]
+}
